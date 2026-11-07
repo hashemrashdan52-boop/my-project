@@ -6,35 +6,46 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Typeface;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.net.wifi.ScanResult;
+import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiNetworkSuggestion;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PersistableBundle;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,6 +56,9 @@ import java.util.Locale;
 public class MainActivity extends Activity {
 
     private static final int REQ_PERMISSIONS = 42;
+    private static final int REQ_ADD_NETWORK = 43;
+    /** How long to wait for a connection before giving the user the next step. */
+    private static final long CONNECT_CHECK_MS = 12000L;
     /** Android allows 4 scans per 2 minutes for foreground apps; stay below that. */
     private static final long AUTO_SCAN_INTERVAL_MS = 40000L;
     private static final long SCAN_TIMEOUT_MS = 15000L;
@@ -90,6 +104,8 @@ public class MainActivity extends Activity {
     private long lastScanRequest;
     private int shownCount = -1;
     private ValueAnimator countAnimator;
+    /** Network the user just asked to join; cleared once connected or after the check. */
+    private String pendingSsid;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
@@ -98,8 +114,30 @@ public class MainActivity extends Activity {
             String action = intent.getAction();
             if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(action)) {
                 onScanResultsAvailable();
+            } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
+                onNetworkStateChanged();
+            } else if (WifiManager.SUPPLICANT_STATE_CHANGED_ACTION.equals(action)) {
+                onSupplicantStateChanged(intent);
             } else {
                 refreshState(false);
+            }
+        }
+    };
+
+    private final Runnable connectCheck = new Runnable() {
+        @Override
+        public void run() {
+            String ssid = pendingSsid;
+            pendingSsid = null;
+            if (ssid == null || !resumed || ssid.equals(currentSsid())) return;
+            if (Build.VERSION.SDK_INT >= 29) {
+                // The network is saved; let the user pick it from the system list.
+                Toast.makeText(MainActivity.this, R.string.tap_network_in_list,
+                        Toast.LENGTH_LONG).show();
+                openWifiPanel();
+            } else {
+                Toast.makeText(MainActivity.this, R.string.connect_failed,
+                        Toast.LENGTH_LONG).show();
             }
         }
     };
@@ -146,7 +184,17 @@ public class MainActivity extends Activity {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 Object item = parent.getItemAtPosition(position);
-                if (item instanceof WifiNetwork) showDetails((WifiNetwork) item);
+                if (item instanceof WifiNetwork) showConnectDialog((WifiNetwork) item);
+            }
+        });
+        listView.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+            @Override
+            public boolean onItemLongClick(AdapterView<?> parent, View view, int position,
+                                           long id) {
+                Object item = parent.getItemAtPosition(position);
+                if (!(item instanceof WifiNetwork)) return false;
+                showDetails((WifiNetwork) item);
+                return true;
             }
         });
 
@@ -202,6 +250,35 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(scanTimeout);
         setScanning(false);
         radar.setRunning(false);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_ADD_NETWORK) return;
+        if (resultCode != RESULT_OK) {
+            pendingSsid = null;
+            Toast.makeText(this, R.string.network_save_cancelled, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int code = 0; // Settings.ADD_WIFI_RESULT_SUCCESS
+        if (data != null && Build.VERSION.SDK_INT >= 30) {
+            List<Integer> codes =
+                    data.getIntegerArrayListExtra(Settings.EXTRA_WIFI_NETWORK_RESULT_LIST);
+            if (codes != null && !codes.isEmpty() && codes.get(0) != null) code = codes.get(0);
+        }
+        if (code == 1) { // Settings.ADD_WIFI_RESULT_ADD_OR_UPDATE_FAILED
+            pendingSsid = null;
+            Toast.makeText(this, R.string.network_save_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (pendingSsid != null && pendingSsid.equals(currentSsid())) {
+            onNetworkStateChanged();
+            return;
+        }
+        Toast.makeText(this, R.string.network_saved, Toast.LENGTH_SHORT).show();
+        handler.removeCallbacks(connectCheck);
+        handler.postDelayed(connectCheck, CONNECT_CHECK_MS);
     }
 
     @Override
@@ -340,13 +417,19 @@ public class MainActivity extends Activity {
         requestPermissions(perms.toArray(new String[0]), REQ_PERMISSIONS);
     }
 
+    /** Opens the quick Wi-Fi panel (Android 10+) or the Wi-Fi settings screen. */
+    private void openWifiPanel() {
+        if (Build.VERSION.SDK_INT >= 29 && safeStart(new Intent(Settings.Panel.ACTION_WIFI))) {
+            return;
+        }
+        safeStart(new Intent(Settings.ACTION_WIFI_SETTINGS));
+    }
+
     @SuppressWarnings("deprecation")
     private void enableWifi() {
         if (Build.VERSION.SDK_INT >= 29) {
             // Apps can no longer switch Wi-Fi on by themselves; open the quick Wi-Fi panel.
-            if (!safeStart(new Intent("android.settings.panel.action.WIFI"))) {
-                safeStart(new Intent(Settings.ACTION_WIFI_SETTINGS));
-            }
+            openWifiPanel();
         } else {
             boolean ok = false;
             try {
@@ -373,16 +456,8 @@ public class MainActivity extends Activity {
 
     private boolean isLocationEnabled() {
         if (locationManager == null) return true;
-        if (Build.VERSION.SDK_INT >= 28) {
-            try {
-                Method m = LocationManager.class.getMethod("isLocationEnabled");
-                Object v = m.invoke(locationManager);
-                if (v instanceof Boolean) return (Boolean) v;
-            } catch (Exception ignored) {
-                // fall back to providers below
-            }
-        }
         try {
+            if (Build.VERSION.SDK_INT >= 28) return locationManager.isLocationEnabled();
             return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
                     || locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
         } catch (Exception e) {
@@ -415,21 +490,16 @@ public class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
+        filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
+        filter.addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
         filter.addAction(LocationManager.PROVIDERS_CHANGED_ACTION);
         if (Build.VERSION.SDK_INT >= 33) {
-            // Android 13+: state the export flag explicitly (Context.RECEIVER_EXPORTED = 2) so
-            // Android 14+ never rejects the registration. All three actions are system broadcasts.
-            try {
-                Method m = Context.class.getMethod("registerReceiver",
-                        BroadcastReceiver.class, IntentFilter.class, int.class);
-                m.invoke(this, receiver, filter, 2);
-                receiverRegistered = true;
-                return;
-            } catch (Exception ignored) {
-                // fall back to the classic call below
-            }
+            // State the export flag explicitly so Android 14+ never rejects the registration.
+            // All actions are system broadcasts.
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(receiver, filter);
         }
-        registerReceiver(receiver, filter);
         receiverRegistered = true;
     }
 
@@ -727,6 +797,303 @@ public class MainActivity extends Activity {
             sb.append(p);
         }
         return sb.toString();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Connecting
+    // ---------------------------------------------------------------------------------------------
+
+    private void onNetworkStateChanged() {
+        if (problem == Problem.NONE) showResults();
+        String ssid = pendingSsid;
+        if (ssid != null && ssid.equals(currentSsid())) {
+            pendingSsid = null;
+            handler.removeCallbacks(connectCheck);
+            Toast.makeText(this, getString(R.string.connected_to, ssid), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void onSupplicantStateChanged(Intent intent) {
+        if (pendingSsid == null) return;
+        int error = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
+        if (error == WifiManager.ERROR_AUTHENTICATING) {
+            pendingSsid = null;
+            handler.removeCallbacks(connectCheck);
+            Toast.makeText(this, R.string.wrong_password, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** SSID of the network the phone is connected to, or null. */
+    @SuppressWarnings("deprecation")
+    private String currentSsid() {
+        try {
+            WifiInfo info = wifi.getConnectionInfo();
+            if (info == null || (info.getNetworkId() == -1 && info.getBSSID() == null)) return null;
+            String ssid = info.getSSID();
+            if (ssid == null || "<unknown ssid>".equals(ssid)) return null;
+            if (ssid.length() >= 2 && ssid.startsWith("\"") && ssid.endsWith("\"")) {
+                ssid = ssid.substring(1, ssid.length() - 1);
+            }
+            return ssid.isEmpty() ? null : ssid;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean isEnterprise(String security) {
+        return security != null && security.endsWith("Enterprise");
+    }
+
+    private static boolean needsPassword(String security) {
+        return security != null && !"OWE".equals(security);
+    }
+
+    private void showConnectDialog(final WifiNetwork n) {
+        if (n.connected) {
+            showDetails(n);
+            return;
+        }
+        View content = getLayoutInflater().inflate(R.layout.dialog_connect, null);
+        TextView title = (TextView) content.findViewById(R.id.connect_title);
+        TextView subtitle = (TextView) content.findViewById(R.id.connect_subtitle);
+        final EditText ssidInput = (EditText) content.findViewById(R.id.ssid_input);
+        final EditText passwordInput = (EditText) content.findViewById(R.id.password_input);
+        final CheckBox showPassword = (CheckBox) content.findViewById(R.id.show_password);
+        final TextView error = (TextView) content.findViewById(R.id.connect_error);
+        TextView note = (TextView) content.findViewById(R.id.connect_note);
+
+        final boolean enterprise = isEnterprise(n.security);
+        final boolean needsPassword = needsPassword(n.security) && !enterprise;
+
+        title.setText(n.hidden ? getString(R.string.hidden_network) : n.ssid);
+        subtitle.setText(securityLabel(n) + DOT + getString(WifiUtils.signalLabelRes(n.best.level))
+                + DOT + WifiUtils.ltr(n.best.level + " dBm"));
+        ssidInput.setVisibility(n.hidden && !enterprise ? View.VISIBLE : View.GONE);
+        passwordInput.setVisibility(needsPassword ? View.VISIBLE : View.GONE);
+        showPassword.setVisibility(needsPassword ? View.VISIBLE : View.GONE);
+        showPassword.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton button, boolean checked) {
+                int selection = passwordInput.getSelectionEnd();
+                passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | (checked
+                        ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        : InputType.TYPE_TEXT_VARIATION_PASSWORD));
+                passwordInput.setTypeface(Typeface.DEFAULT);
+                passwordInput.setSelection(Math.max(0, selection));
+            }
+        });
+
+        int noteRes;
+        if (enterprise) {
+            noteRes = R.string.connect_note_enterprise;
+        } else if (!needsPassword && Build.VERSION.SDK_INT < 30) {
+            noteRes = R.string.connect_note_open;
+        } else if (Build.VERSION.SDK_INT >= 30 && !"WEP".equals(n.security)) {
+            noteRes = R.string.connect_note_system;
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            noteRes = R.string.connect_note_manual;
+        } else {
+            noteRes = R.string.connect_note_direct;
+        }
+        note.setText(noteRes);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, R.style.DialogTheme)
+                .setView(content)
+                .setPositiveButton(enterprise ? R.string.open_wifi_settings : R.string.connect, null)
+                .setNegativeButton(R.string.cancel, null)
+                .setNeutralButton(R.string.details, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        showDetails(n);
+                    }
+                });
+        final AlertDialog dialog = builder.create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface d) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(
+                        new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                if (enterprise) {
+                                    dialog.dismiss();
+                                    openWifiPanel();
+                                    return;
+                                }
+                                String ssid = n.hidden ? ssidInput.getText().toString().trim()
+                                        : n.ssid;
+                                String password = needsPassword
+                                        ? passwordInput.getText().toString() : "";
+                                int err = 0;
+                                if (ssid.isEmpty()) {
+                                    err = R.string.err_ssid_empty;
+                                } else if (needsPassword) {
+                                    err = validatePassword(n.security, password);
+                                }
+                                if (err == 0) err = connect(n, ssid, password);
+                                if (err != 0) {
+                                    error.setText(err);
+                                    error.setVisibility(View.VISIBLE);
+                                    return;
+                                }
+                                dialog.dismiss();
+                            }
+                        });
+            }
+        });
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        }
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        }
+        if (n.hidden && !enterprise) {
+            ssidInput.requestFocus();
+        } else if (needsPassword) {
+            passwordInput.requestFocus();
+        }
+    }
+
+    /** Returns an error message resource, or 0 when the password looks valid. */
+    private static int validatePassword(String security, String password) {
+        if ("WEP".equals(security)) {
+            int len = password.length();
+            boolean ascii = len == 5 || len == 13;
+            boolean hex = (len == 10 || len == 26) && isHex(password);
+            return ascii || hex ? 0 : R.string.err_password_wep;
+        }
+        if (password.length() == 64 && isHex(password)) return 0;
+        if (password.length() < 8) return R.string.err_password_short;
+        if (password.length() > 63) return R.string.err_password_long;
+        return 0;
+    }
+
+    private static boolean isHex(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.digit(s.charAt(i), 16) < 0) return false;
+        }
+        return !s.isEmpty();
+    }
+
+    /** Starts connecting; returns an error message resource, or 0 on success. */
+    private int connect(WifiNetwork n, String ssid, String password) {
+        if (Build.VERSION.SDK_INT >= 30 && !"WEP".equals(n.security)) {
+            return connectWithSystemDialog(n, ssid, password);
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            // Android 10 has no "add network" dialog for apps; WEP is not supported by it either.
+            copyPasswordAndOpenWifi(password);
+            return 0;
+        }
+        if (legacyConnect(n, ssid, password)) {
+            pendingSsid = ssid;
+            Toast.makeText(this, getString(R.string.connecting_to, ssid), Toast.LENGTH_SHORT)
+                    .show();
+            handler.removeCallbacks(connectCheck);
+            handler.postDelayed(connectCheck, CONNECT_CHECK_MS);
+        } else {
+            copyPasswordAndOpenWifi(password);
+        }
+        return 0;
+    }
+
+    /** Android 11+: hand the network to the system "Save network?" dialog. */
+    private int connectWithSystemDialog(WifiNetwork n, String ssid, String password) {
+        if (Build.VERSION.SDK_INT < 30) return R.string.err_password_invalid;
+        WifiNetworkSuggestion suggestion;
+        try {
+            WifiNetworkSuggestion.Builder b = new WifiNetworkSuggestion.Builder().setSsid(ssid);
+            if (n.hidden) b.setIsHiddenSsid(true);
+            if ("OWE".equals(n.security)) {
+                b.setIsEnhancedOpen(true);
+            } else if ("WPA3".equals(n.security)) {
+                b.setWpa3Passphrase(password);
+            } else if (n.security != null) {
+                b.setWpa2Passphrase(password);
+            }
+            suggestion = b.build();
+        } catch (RuntimeException e) {
+            return R.string.err_password_invalid;
+        }
+        ArrayList<WifiNetworkSuggestion> list = new ArrayList<>();
+        list.add(suggestion);
+        Intent intent = new Intent(Settings.ACTION_WIFI_ADD_NETWORKS);
+        intent.putParcelableArrayListExtra(Settings.EXTRA_WIFI_NETWORK_LIST, list);
+        try {
+            startActivityForResult(intent, REQ_ADD_NETWORK);
+            pendingSsid = ssid;
+        } catch (Exception e) {
+            copyPasswordAndOpenWifi(password);
+        }
+        return 0;
+    }
+
+    /** Android 9 and older: apps may add and enable networks directly. */
+    @SuppressLint("MissingPermission")
+    @SuppressWarnings("deprecation")
+    private boolean legacyConnect(WifiNetwork n, String ssid, String password) {
+        try {
+            WifiConfiguration c = new WifiConfiguration();
+            c.SSID = "\"" + ssid + "\"";
+            c.hiddenSSID = n.hidden;
+            if (n.security == null || "OWE".equals(n.security)) {
+                c.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+            } else if ("WEP".equals(n.security)) {
+                c.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+                c.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN);
+                c.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.SHARED);
+                boolean hex = (password.length() == 10 || password.length() == 26)
+                        && isHex(password);
+                c.wepKeys[0] = hex ? password : "\"" + password + "\"";
+                c.wepTxKeyIndex = 0;
+            } else {
+                c.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+                boolean hex = password.length() == 64 && isHex(password);
+                c.preSharedKey = hex ? password : "\"" + password + "\"";
+            }
+            if (!wifi.isWifiEnabled()) wifi.setWifiEnabled(true);
+            int id = wifi.addNetwork(c);
+            if (id == -1) {
+                List<WifiConfiguration> saved = wifi.getConfiguredNetworks();
+                if (saved != null) {
+                    for (WifiConfiguration existing : saved) {
+                        if (c.SSID.equals(existing.SSID)) {
+                            c.networkId = existing.networkId;
+                            id = wifi.updateNetwork(c);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (id == -1) return false;
+            boolean ok = wifi.enableNetwork(id, true);
+            wifi.reconnect();
+            return ok;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Fallback: copy the password and open the system Wi-Fi list so the user can paste it. */
+    private void copyPasswordAndOpenWifi(String password) {
+        if (password != null && !password.isEmpty()) {
+            ClipboardManager cm = getSystemService(ClipboardManager.class);
+            if (cm != null) {
+                ClipData clip = ClipData.newPlainText("Wi-Fi password", password);
+                if (Build.VERSION.SDK_INT >= 24) {
+                    // Hide the password from clipboard previews (Android 13+).
+                    PersistableBundle extras = new PersistableBundle();
+                    extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+                    clip.getDescription().setExtras(extras);
+                }
+                cm.setPrimaryClip(clip);
+            }
+            Toast.makeText(this, R.string.password_copied, Toast.LENGTH_LONG).show();
+        }
+        openWifiPanel();
     }
 
     // ---------------------------------------------------------------------------------------------

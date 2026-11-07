@@ -18,7 +18,7 @@
     <string name="stat_hidden">مخفية</string>
 
     <string name="section_networks">الشبكات القريبة</string>
-    <string name="section_hint">مرتبة حسب قوة الإشارة • اضغط على أي شبكة لعرض التفاصيل</string>
+    <string name="section_hint">مرتبة حسب قوة الإشارة • اضغط على الشبكة للاتصال بها، واضغط مطوّلاً لعرض التفاصيل</string>
     <string name="empty_networks">لم يتم العثور على أي شبكة بعد</string>
     <string name="empty_scanning">جارٍ البحث عن الشبكات…</string>
     <string name="footer_note">يتم التحديث تلقائياً كل 40 ثانية. المسافة تقديرية وتعتمد على قوة الإشارة والجدران.</string>
@@ -65,4 +65,30 @@
     <string name="signal_good">جيدة</string>
     <string name="signal_fair">متوسطة</string>
     <string name="signal_weak">ضعيفة</string>
+    <string name="connect">اتصال</string>
+    <string name="details">التفاصيل</string>
+    <string name="cancel">إلغاء</string>
+    <string name="password_hint">كلمة سر الشبكة</string>
+    <string name="ssid_hint">اسم الشبكة المخفية</string>
+    <string name="show_password">إظهار كلمة السر</string>
+    <string name="connect_note_system">بعد الضغط على «اتصال» سيسألك أندرويد عن حفظ الشبكة، اضغط «حفظ».</string>
+    <string name="connect_note_manual">سيتم نسخ كلمة السر وفتح قائمة الواي فاي: اختر الشبكة والصق كلمة السر.</string>
+    <string name="connect_note_direct">سيتصل الهاتف بالشبكة مباشرة.</string>
+    <string name="connect_note_open">هذه شبكة مفتوحة ولا تحتاج كلمة سر.</string>
+    <string name="connect_note_enterprise">هذه شبكة شركات (Enterprise) وتحتاج اسم مستخدم وشهادة، لذلك يتم الاتصال بها من إعدادات الواي فاي.</string>
+    <string name="open_wifi_settings">فتح إعدادات الواي فاي</string>
+    <string name="err_ssid_empty">اكتب اسم الشبكة</string>
+    <string name="err_password_short">كلمة السر يجب أن تكون 8 أحرف على الأقل</string>
+    <string name="err_password_long">كلمة السر طويلة جداً (الحد الأقصى 63 حرفاً)</string>
+    <string name="err_password_wep">كلمة سر WEP يجب أن تكون 5 أو 13 حرفاً (أو 10 أو 26 رقماً سداسياً)</string>
+    <string name="err_password_invalid">كلمة السر غير صالحة لهذه الشبكة</string>
+    <string name="connecting_to">جارٍ الاتصال بـ %1$s…</string>
+    <string name="connected_to">تم الاتصال بـ %1$s ✓</string>
+    <string name="network_saved">تم حفظ الشبكة، جارٍ الاتصال…</string>
+    <string name="network_save_failed">لم يتمكن أندرويد من حفظ الشبكة</string>
+    <string name="network_save_cancelled">تم إلغاء الاتصال</string>
+    <string name="tap_network_in_list">الشبكة محفوظة. اضغط عليها في قائمة الواي فاي للاتصال</string>
+    <string name="wrong_password">كلمة السر غير صحيحة</string>
+    <string name="connect_failed">لم يتم الاتصال بعد. تأكد من كلمة السر وحاول مرة أخرى</string>
+    <string name="password_copied">تم نسخ كلمة السر. اختر الشبكة من القائمة والصق كلمة السر</string>
 </resources>

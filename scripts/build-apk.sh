@@ -4,11 +4,17 @@
 #
 #   sudo apt-get install aapt apksigner zipalign dalvik-exchange android-sdk-platform-23
 #
+# Resources are linked against Ubuntu's API 23 android.jar. Java is compiled against the
+# Android 15 framework jar that Robolectric publishes on Maven Central (downloaded once into
+# .cache/ and checked against its published SHA-1), so newer APIs can be used behind
+# Build.VERSION checks.
+#
 # The normal way to build is still Gradle (./gradlew assembleDebug) or Android Studio.
 # Versions and the application id are read from app/build.gradle so both builds stay in sync.
 #
 # Environment overrides:
-#   ANDROID_JAR  android.jar to compile and link against
+#   ANDROID_JAR  android.jar to link resources against
+#   COMPILE_JAR  framework jar to compile Java against
 #   BUILD_TOOLS  directory containing aapt2
 #   KEYSTORE     signing keystore (created on first run if missing)
 #   KS_PASS      keystore and key password
@@ -20,6 +26,8 @@ APP="$ROOT/app"
 OUT="$ROOT/build-nosdk"
 
 ANDROID_JAR="${ANDROID_JAR:-/usr/lib/android-sdk/platforms/android-23/android.jar}"
+COMPILE_JAR="${COMPILE_JAR:-$ROOT/.cache/android-all-35.jar}"
+ANDROID_ALL_VERSION="15-robolectric-14663667"
 BUILD_TOOLS="${BUILD_TOOLS:-/usr/lib/android-sdk/build-tools/debian}"
 AAPT2="$BUILD_TOOLS/aapt2"
 DX="$(command -v dalvik-exchange || echo "$BUILD_TOOLS/dx")"
@@ -61,10 +69,20 @@ sed "s#<manifest #<manifest package=\"$APP_ID\" #" "$APP/src/main/AndroidManifes
     -o "$OUT/resources.apk" \
     "$OUT/compiled/res.zip"
 
+if [ ! -f "$COMPILE_JAR" ]; then
+    echo "==> Downloading Android framework jar ($ANDROID_ALL_VERSION)"
+    url="https://repo1.maven.org/maven2/org/robolectric/android-all/$ANDROID_ALL_VERSION/android-all-$ANDROID_ALL_VERSION.jar"
+    mkdir -p "$(dirname "$COMPILE_JAR")"
+    curl -fsSL -o "$COMPILE_JAR.part" "$url"
+    echo "$(curl -fsSL "$url.sha1")  $COMPILE_JAR.part" | sha1sum -c --quiet -
+    mv "$COMPILE_JAR.part" "$COMPILE_JAR"
+fi
+
 echo "==> Compiling Java"
 find "$APP/src/main/java" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
-javac -nowarn -Xlint:-options -encoding UTF-8 -source 8 -target 8 \
-    -bootclasspath "$ANDROID_JAR" -classpath "$ANDROID_JAR" \
+# java.* comes from the JDK's Java 8 API (--release 8); android.* from the framework jar.
+javac -nowarn -Xlint:-options -encoding UTF-8 --release 8 \
+    -classpath "$COMPILE_JAR" \
     -d "$OUT/classes" @"$OUT/sources.txt"
 
 echo "==> Dexing"

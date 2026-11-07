@@ -5,6 +5,7 @@
     <color name="surface">#FF121A2B</color>
     <color name="surface_connected">#FF0F2233</color>
     <color name="card_stroke">#FF1F2A44</color>
+    <color name="input_bg">#FF0B1324</color>
     <color name="radar_fill">#FF0E1729</color>
     <color name="radar_ring">#FF1C2943</color>
 

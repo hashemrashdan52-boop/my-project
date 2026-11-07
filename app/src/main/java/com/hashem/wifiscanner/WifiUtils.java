@@ -3,7 +3,6 @@ package com.hashem.wifiscanner;
 import android.net.wifi.ScanResult;
 import android.os.Build;
 
-import java.lang.reflect.Method;
 import java.util.Locale;
 
 /** Helpers to turn raw scan data into human-readable values. */
@@ -18,9 +17,6 @@ final class WifiUtils {
     /** Left-to-right mark / right-to-left mark, used to keep Latin fragments intact in Arabic lines. */
     private static final char LRM = '‎';
     private static final char RLM = '‏';
-
-    private static Method sGetWifiStandard;
-    private static boolean sWifiStandardLookedUp;
 
     private WifiUtils() {
     }
@@ -145,24 +141,10 @@ final class WifiUtils {
         }
     }
 
-    /** {@code ScanResult.getWifiStandard()} (API 30+), looked up reflectively; -1 if unavailable. */
+    /** {@code ScanResult.getWifiStandard()} on Android 11+, otherwise -1. */
     static int wifiStandard(ScanResult r) {
         if (Build.VERSION.SDK_INT < 30) return -1;
-        if (!sWifiStandardLookedUp) {
-            sWifiStandardLookedUp = true;
-            try {
-                sGetWifiStandard = ScanResult.class.getMethod("getWifiStandard");
-            } catch (Exception ignored) {
-                sGetWifiStandard = null;
-            }
-        }
-        if (sGetWifiStandard == null) return -1;
-        try {
-            Object v = sGetWifiStandard.invoke(r);
-            return v instanceof Integer ? (Integer) v : -1;
-        } catch (Exception e) {
-            return -1;
-        }
+        return r.getWifiStandard();
     }
 
     static String wifiStandardLabel(int standard, int band) {
