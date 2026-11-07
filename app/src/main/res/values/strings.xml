@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ماسح الشبكات</string>
+    <string name="app_subtitle">اكتشف شبكات الواي فاي من حولك</string>
+
+    <string name="networks_around">شبكة حولك</string>
+    <string name="count_unknown">؟</string>
+    <string name="summary_format">نقاط الوصول: %1$s • آخر تحديث %2$s</string>
+    <string name="summary_idle">اضغط «مسح الآن» للبحث عن الشبكات</string>
+
+    <string name="scan_now">مسح الآن</string>
+    <string name="scanning">جارٍ المسح…</string>
+    <string name="scan_throttled">أندرويد يسمح بعدد محدود من عمليات المسح (4 مرات كل دقيقتين). تم عرض آخر النتائج.</string>
+
+    <string name="stat_24">2.4 GHz</string>
+    <string name="stat_5">5 / 6 GHz</string>
+    <string name="stat_open">مفتوحة</string>
+    <string name="stat_hidden">مخفية</string>
+
+    <string name="section_networks">الشبكات القريبة</string>
+    <string name="section_hint">مرتبة حسب قوة الإشارة • اضغط على أي شبكة لعرض التفاصيل</string>
+    <string name="empty_networks">لم يتم العثور على أي شبكة بعد</string>
+    <string name="empty_scanning">جارٍ البحث عن الشبكات…</string>
+    <string name="footer_note">يتم التحديث تلقائياً كل 40 ثانية. المسافة تقديرية وتعتمد على قوة الإشارة والجدران.</string>
+
+    <string name="hidden_network">شبكة مخفية</string>
+    <string name="connected">متصل</string>
+    <string name="open_network">مفتوحة</string>
+    <string name="open_owe">مفتوحة مشفّرة</string>
+    <string name="channel">قناة</string>
+    <string name="access_points">نقاط وصول: %1$s</string>
+    <string name="meters">م</string>
+
+    <string name="title_permission">إذن الموقع مطلوب</string>
+    <string name="msg_permission">نظام أندرويد يشترط إذن الموقع حتى يستطيع أي تطبيق رؤية شبكات الواي فاي القريبة. التطبيق لا يحفظ موقعك ولا يرسله لأي جهة.</string>
+    <string name="btn_grant">منح الإذن</string>
+    <string name="title_precise">اختر «الموقع الدقيق»</string>
+    <string name="msg_precise">منحت إذن الموقع التقريبي فقط، وأندرويد يحتاج الموقع الدقيق لعرض الشبكات.</string>
+    <string name="msg_permission_blocked">تم رفض الإذن. افتح إعدادات التطبيق ← الأذونات ← الموقع، واختر «السماح» مع تفعيل «الموقع الدقيق».</string>
+    <string name="btn_open_settings">فتح الإعدادات</string>
+    <string name="title_location_off">خدمة الموقع مغلقة</string>
+    <string name="msg_location_off">فعّل الموقع (GPS) من الإعدادات حتى تظهر الشبكات. هذا شرط من نظام أندرويد.</string>
+    <string name="btn_enable_location">تفعيل الموقع</string>
+    <string name="title_wifi_off">الواي فاي مغلق</string>
+    <string name="msg_wifi_off">شغّل الواي فاي ليتمكن التطبيق من البحث عن الشبكات القريبة.</string>
+    <string name="btn_enable_wifi">تشغيل الواي فاي</string>
+    <string name="title_no_wifi">الواي فاي غير مدعوم</string>
+    <string name="msg_no_wifi">هذا الجهاز لا يحتوي على واي فاي.</string>
+
+    <string name="d_security">الحماية</string>
+    <string name="d_signal">قوة الإشارة</string>
+    <string name="d_distance">المسافة التقريبية</string>
+    <string name="d_band">النطاق</string>
+    <string name="d_channel">القناة</string>
+    <string name="d_frequency">التردد</string>
+    <string name="d_width">عرض القناة</string>
+    <string name="d_standard">المعيار</string>
+    <string name="d_bssid">عنوان الراوتر (BSSID)</string>
+    <string name="d_aps">عدد نقاط الوصول</string>
+    <string name="d_all_aps">كل نقاط الوصول لهذه الشبكة</string>
+    <string name="d_capabilities">تفاصيل التشفير</string>
+    <string name="ok">حسناً</string>
+
+    <string name="signal_excellent">ممتازة</string>
+    <string name="signal_good">جيدة</string>
+    <string name="signal_fair">متوسطة</string>
+    <string name="signal_weak">ضعيفة</string>
+</resources>

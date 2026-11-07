@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Radar ring -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M20,54 A34,34 0 1,1 88,54 A34,34 0 1,1 20,54 Z"
+        android:strokeWidth="1.5"
+        android:strokeColor="#5522D3EE" />
+    <!-- Wi-Fi arcs -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M31.37,47.37 A32,32 0 0,1 76.63,47.37"
+        android:strokeWidth="6.5"
+        android:strokeColor="#FF22D3EE"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M38.44,54.44 A22,22 0 0,1 69.56,54.44"
+        android:strokeWidth="6.5"
+        android:strokeColor="#FF22D3EE"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M45.51,61.51 A12,12 0 0,1 62.49,61.51"
+        android:strokeWidth="6.5"
+        android:strokeColor="#FF22D3EE"
+        android:strokeLineCap="round" />
+    <!-- Dot -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M49,70 A5,5 0 1,0 59,70 A5,5 0 1,0 49,70 Z" />
+</vector>

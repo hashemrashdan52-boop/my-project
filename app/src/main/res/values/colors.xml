@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FF0A0F1C</color>
+    <color name="scrim">#E60A0F1C</color>
+    <color name="surface">#FF121A2B</color>
+    <color name="surface_connected">#FF0F2233</color>
+    <color name="card_stroke">#FF1F2A44</color>
+    <color name="radar_fill">#FF0E1729</color>
+    <color name="radar_ring">#FF1C2943</color>
+
+    <color name="text">#FFF1F5F9</color>
+    <color name="muted">#FF94A3B8</color>
+    <color name="dim">#FF64748B</color>
+
+    <color name="accent">#FF22D3EE</color>
+    <color name="on_accent">#FF04222B</color>
+
+    <color name="warn_bg">#FF2A1F0A</color>
+    <color name="warn_stroke">#FF8A5A12</color>
+    <color name="warn_text">#FFFBBF24</color>
+
+    <color name="sig_excellent">#FF22C55E</color>
+    <color name="sig_good">#FFA3E635</color>
+    <color name="sig_fair">#FFF59E0B</color>
+    <color name="sig_weak">#FFEF4444</color>
+    <color name="bars_off">#FF26324C</color>
+
+    <color name="ic_launcher_bg">#FF0E1A2E</color>
+</resources>
