@@ -773,24 +773,19 @@ public class MainActivity extends Activity {
     }
 
     private String securityAndBandLine(WifiNetwork n) {
-        StringBuilder sb = new StringBuilder(securityLabel(n));
-        sb.append(DOT).append(WifiUtils.ltr(n.bandsLabel()));
-        int ch = WifiUtils.channel(n.best.frequency);
-        if (ch > 0) sb.append(DOT).append(getString(R.string.channel)).append(' ').append(ch);
-        return sb.toString();
+        return securityLabel(n) + DOT + WifiUtils.ltr(n.bandsLabel());
     }
 
     private String extraLine(WifiNetwork n) {
         ScanResult b = n.best;
         List<String> parts = new ArrayList<>();
-        String distance = WifiUtils.formatDistance(WifiUtils.distanceMeters(b.level, b.frequency));
-        if (distance != null) parts.add("~" + distance + " " + getString(R.string.meters));
-        if (n.aps.size() > 1) {
-            parts.add(getString(R.string.access_points, String.valueOf(n.aps.size())));
-        }
+        int ch = WifiUtils.channel(b.frequency);
+        if (ch > 0) parts.add(getString(R.string.channel) + " " + ch);
         String std = WifiUtils.wifiStandardLabel(WifiUtils.wifiStandard(b),
                 WifiUtils.band(b.frequency));
         if (std != null) parts.add(WifiUtils.ltr(std));
+        String distance = WifiUtils.formatDistance(WifiUtils.distanceMeters(b.level, b.frequency));
+        if (distance != null) parts.add("~" + distance + " " + getString(R.string.meters));
         StringBuilder sb = new StringBuilder();
         for (String p : parts) {
             if (sb.length() > 0) sb.append(DOT);

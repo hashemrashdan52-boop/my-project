@@ -28,7 +28,6 @@
     <string name="open_network">مفتوحة</string>
     <string name="open_owe">مفتوحة مشفّرة</string>
     <string name="channel">قناة</string>
-    <string name="access_points">نقاط وصول: %1$s</string>
     <string name="meters">م</string>
 
     <string name="title_permission">إذن الموقع مطلوب</string>
