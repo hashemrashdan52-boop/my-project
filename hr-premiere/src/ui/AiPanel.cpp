@@ -195,7 +195,9 @@ void AiPanel::buildUi() {
     row->addWidget(new QLabel(TR("Language")), 0, 0);
     m_lang = new QComboBox;
     for (const auto& l : kLanguages) m_lang->addItem(TR(l.name), l.code);
-    m_lang->setCurrentIndex(std::max(0, m_lang->findData(s.value("ai/language", "auto"))));
+    // until the user picks something else the speech is expected in the language of the program (people mostly record in
+    // their own language, and a fixed language avoids the wrong guesses automatic detection makes on poor sound)
+    m_lang->setCurrentIndex(std::max(0, m_lang->findData(s.value("ai/language", i18n::isRtl() ? "ar" : "auto"))));
     row->addWidget(m_lang, 0, 1);
     row->addWidget(new QLabel(TR("Accuracy")), 1, 0);
     m_accuracy = new QComboBox;

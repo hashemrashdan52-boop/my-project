@@ -857,6 +857,7 @@ private slots:
         const auto before = i18n::current();
         i18n::setCurrent(i18n::Lang::Arabic);
         QApplication::setLayoutDirection(Qt::RightToLeft);
+        QSettings().remove("ai/language");                             // nothing chosen yet
         {
             MainWindow arabic(false);
             arabic.resize(1500, 900);
@@ -871,6 +872,11 @@ private slots:
             QVERIFY2(found, "the assistant's title is in Arabic");
             auto* panel = arabic.findChild<AiPanel*>();
             QVERIFY(panel);
+            QComboBox* speech = nullptr;                               // the language of the speech starts as the language of the program
+            for (auto* box : panel->findChildren<QComboBox*>())
+                if (box->findData("ar") >= 0 && box->findData("auto") >= 0) speech = box;      // (the clean-up list also has an "auto")
+            QVERIFY(speech);
+            QCOMPARE(speech->currentData().toString(), QString("ar"));
             QVERIFY(panel->chat()->messageCount() >= 1);               // the greeting
             QVERIFY(panel->chat()->lastBotText().contains(QString::fromUtf8("مونتاج كامل")));
             // the quick buttons carry words the chat understands
