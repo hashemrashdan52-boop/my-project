@@ -75,7 +75,7 @@ void Player::play() {
     m_playing = true;
     m_playStart = m_pos;
     m_wall.start();
-    m_useAudioClock = timelineHasAudio();
+    m_useAudioClock = !m_muteAudio && timelineHasAudio();
     m_restarts = 0;
     if (m_useAudioClock) restartAudio(m_pos);
     m_timer.start();

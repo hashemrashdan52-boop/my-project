@@ -1,13 +1,17 @@
 // UI tests: drive the real main window (offscreen) with synthetic mouse / keyboard events.
 #include "core/EditOps.h"
 #include "engine/Exporter.h"
+#include "ui/Dialogs.h"
 #include "ui/MainWindow.h"
+#include "ui/ParticleField.h"
+#include "engine/VoiceRecorder.h"
 #include "ui/MonitorPanel.h"
 #include "ui/ProjectPanel.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
 #include <QDoubleSpinBox>
+#include <QLabel>
 #include <QMimeData>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -55,6 +59,7 @@ private slots:
         QVERIFY(makeVideo(red, "red", 4, true));
         QVERIFY(makeVideo(blue, "blue", 2, false));
         QVERIFY(makeVideo(green, "green", 3, true));
+        QStandardPaths::setTestModeEnabled(true);   // keep recordings / settings out of the real profile
         theme::apply(*qApp);
         w = new MainWindow(false);
         w->resize(1500, 900);
@@ -399,6 +404,61 @@ private slots:
         QVERIFY(proj()->timeline().audio[0].solo);
         QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 56, y));
         QVERIFY(!proj()->timeline().audio[0].solo);
+    }
+
+
+    void voiceOverRecordsAndPlacesClip() {
+        if (!VoiceRecorder::hasMicrophone()) QSKIP("no microphone in this environment");
+        load();                                      // V1 + A1 (sound of red.mp4), 6 s long
+        const int audioRowY = int(tl()->clipRectForId(proj()->timeline().audio[0].clips[0].id).center().y());
+        w->program()->seek(1.0);
+        const int mediaBefore = proj()->media().size();
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(48, audioRowY + 48));      // the microphone button of A2
+        // 3-2-1 countdown, then recording starts and the picture plays along
+        QTRY_VERIFY_WITH_TIMEOUT(w->program()->isPlaying(), 6000);
+        QTest::qWait(1500);
+        QTest::keyClick(w, Qt::Key_Space);           // Space stops the recording
+        QTRY_COMPARE_WITH_TIMEOUT(proj()->media().size(), mediaBefore + 1, 3000);
+        QCOMPARE(proj()->timeline().audio[1].clips.size(), 1);
+        const Clip vo = proj()->timeline().audio[1].clips[0];
+        QVERIFY(vo.name.startsWith("Voice-over"));
+        QVERIFY(std::abs(vo.start - 1.0) < 0.05);
+        QVERIFY2(vo.duration > 1.0, qPrintable(QString::number(vo.duration)));
+        QVERIFY(!w->program()->isPlaying());
+        proj()->undoStack()->undo();                 // placing it is one undo step
+        QCOMPARE(proj()->timeline().audio[1].clips.size(), 0);
+    }
+
+
+    void ownershipPageHasLogosAndAnimatedBackground() {
+        OwnershipDialog dlg;
+        dlg.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dlg));
+        QStringList texts;
+        for (QLabel* l : dlg.findChildren<QLabel*>()) texts << l->text();
+        QVERIFY(texts.contains("الملكية"));
+        QVERIFY(texts.contains("HR"));
+        QVERIFY(texts.contains("المالك والمطور الأساسي"));   // HR is the owner and the main developer
+        QVERIFY(!texts.contains("المالك"));                    // Kaylar: only logo and name, no caption
+        QVERIFY(!texts.contains("Owner"));
+        // the background animates
+        const QImage a = dlg.grab().toImage();
+        QTest::qWait(400);
+        const QImage b = dlg.grab().toImage();
+        QVERIFY(a != b);
+    }
+
+    void particleFieldStaysInsideTheWindow() {
+        ParticleField f(150);
+        f.resize(QSizeF(800, 450));
+        QCOMPARE(f.count(), 150);
+        for (int i = 0; i < 3000; ++i) f.update(16);
+        for (const ParticleField::Particle& p : f.particles()) {
+            QVERIFY(p.pos.x() >= 0 && p.pos.x() <= 800);
+            QVERIFY(p.pos.y() >= 0 && p.pos.y() <= 450);
+        }
+        f.resize(QSizeF(400, 225));                  // shrinking keeps the dots inside
+        for (const ParticleField::Particle& p : f.particles()) QVERIFY(p.pos.x() <= 400 && p.pos.y() <= 225);
     }
 
     void rendersSensibleScreenshot() {

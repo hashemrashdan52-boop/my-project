@@ -25,6 +25,7 @@ public:
     double duration() const { return m_tl->duration(); }
     double fps() const { return m_tl->fps; }
     bool isPlaying() const { return m_playing; }
+    void setAudioMuted(bool m) { m_muteAudio = m; }   // picture only (used while recording a voice-over)
     double audioDrift() const { return m_lastDrift; }  // sound minus picture, seconds (diagnostics)
 
 public slots:
@@ -57,6 +58,7 @@ private:
     double m_playStart = 0;
     bool m_playing = false;
     bool m_useAudioClock = false;
+    bool m_muteAudio = false;
     // audio / picture sync (see Player::tick)
     void restartAudio(double picturePos);
     double m_lead = 0;              // how much earlier than the picture the audio stream is started (device latency)

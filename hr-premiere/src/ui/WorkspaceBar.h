@@ -15,6 +15,7 @@ public:
 
 signals:
     void workspaceSelected(const QString& name);
+    void logoClicked();
 
 protected:
     void paintEvent(QPaintEvent*) override;

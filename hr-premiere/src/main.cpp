@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
             if (d == "export") dlg = new ExportDialog(window.project()->timeline(), "My Video", &window);
             else if (d == "sequence") dlg = new SequenceDialog(window.project()->timeline(), &window);
             else if (d == "about") dlg = new AboutDialog(&window);
+            else if (d == "ownership") dlg = new OwnershipDialog(&window);
             else if (d == "shortcuts") dlg = new ShortcutsDialog(&window);
             if (dlg) dlg->show();
         }

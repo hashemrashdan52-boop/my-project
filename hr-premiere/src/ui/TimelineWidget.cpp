@@ -153,6 +153,13 @@ void TimelineWidget::onTimelineChanged() {
     update();
 }
 
+void TimelineWidget::setRecording(int audioTrack, double start, double end) {
+    m_recTrack = audioTrack;
+    m_recStart = start;
+    m_recEnd = end;
+    update();
+}
+
 void TimelineWidget::setTool(Tool t) {
     m_tool = t;
     updateCursor(m_mouse);
@@ -320,6 +327,18 @@ void TimelineWidget::paintRows(QPainter& p) {
             const QRectF rc = clipRect(c, r);
             if (rc.right() < headerW() || rc.left() > width()) continue;
             paintClip(p, c, r, sel.contains(c.id));
+        }
+        if (r.type == TrackType::Audio && r.index == m_recTrack) {
+            const QRectF band(timeToX(m_recStart), r.y + 2, std::max(2.0, (m_recEnd - m_recStart) * m_pps), r.h - 4);
+            p.setPen(QPen(QColor("#ff4d57"), 1.5));
+            p.setBrush(QColor(255, 77, 87, 70));
+            p.drawRoundedRect(band, 4, 4);
+            p.setPen(QColor("#ff8a90"));
+            QFont rf = p.font();
+            rf.setPixelSize(11);
+            rf.setBold(true);
+            p.setFont(rf);
+            p.drawText(band.adjusted(8, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, "● REC");
         }
     }
     if (tl.isEmpty() && !m_dropActive) {
@@ -493,6 +512,7 @@ void TimelineWidget::paintHeaders(QPainter& p) {
         if (r.type == TrackType::Video) {
             icon(tr.enabled ? icons::Eye : icons::EyeOff, headerW() - 56, tr.enabled, theme::text);
         } else {
+            icon(icons::Mic, 41, r.index == m_recTrack, QColor("#ff4d57"));
             letter("M", headerW() - 90, !tr.enabled, QColor("#e0a458"));
             letter("S", headerW() - 66, tr.solo, QColor("#e8d44d"));
         }
@@ -600,11 +620,13 @@ bool TimelineWidget::headerClick(const QPoint& p) {
         toggle(tr.locked ? "Unlock track" : "Lock track", [](Track& t) { t.locked = !t.locked; });
     } else if (r.type == TrackType::Video && p.x() >= headerW() - 62) {
         toggle("Toggle track visibility", [](Track& t) { t.enabled = !t.enabled; });
-    } else if (r.type == TrackType::Audio && p.x() >= headerW() - 94 && p.x() < headerW() - 70) {
+    } else if (r.type == TrackType::Audio && p.x() >= headerW() - 92 && p.x() < headerW() - 68) {
         toggle("Toggle mute", [](Track& t) { t.enabled = !t.enabled; });
-    } else if (r.type == TrackType::Audio && p.x() >= headerW() - 70 && p.x() < headerW() - 44) {
+    } else if (r.type == TrackType::Audio && p.x() >= headerW() - 68 && p.x() < headerW() - 44) {
         toggle("Toggle solo", [](Track& t) { t.solo = !t.solo; });
-    } else if (p.x() < 44) {
+    } else if (r.type == TrackType::Audio && p.x() >= 38 && p.x() < headerW() - 92) {
+        emit voiceOverRequested(r.index);          // the microphone button
+    } else if (p.x() < 38) {
         (r.type == TrackType::Video ? m_targetV : m_targetA) = r.index;
         update();
     }

@@ -1,9 +1,12 @@
 #pragma once
 #include "core/Model.h"
 #include "engine/Exporter.h"
+#include "ui/ParticleField.h"
 
 #include <QComboBox>
 #include <QDialog>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProgressBar>
@@ -62,6 +65,23 @@ private:
 class AboutDialog : public QDialog {
 public:
     explicit AboutDialog(QWidget* parent = nullptr);
+};
+
+// "الملكية" – who owns the program (Kaylar) and who developed it (HR).
+class OwnershipDialog : public QDialog {
+public:
+    explicit OwnershipDialog(QWidget* parent = nullptr);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void resizeEvent(QResizeEvent*) override;
+    void showEvent(QShowEvent*) override;
+    void hideEvent(QHideEvent*) override;
+
+private:
+    ParticleField m_field;
+    QTimer m_timer;
+    QElapsedTimer m_clock;
 };
 
 class ShortcutsDialog : public QDialog {

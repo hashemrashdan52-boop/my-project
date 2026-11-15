@@ -68,6 +68,11 @@ struct Marker {
     QColor color = QColor("#7bd88f");
 };
 
+struct TimeRange {
+    double start = 0, end = 0;
+    double length() const { return end - start; }
+};
+
 struct ClipRef {
     TrackType type = TrackType::Video;
     int track = -1;

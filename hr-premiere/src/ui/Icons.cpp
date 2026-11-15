@@ -59,6 +59,7 @@ static void draw(QPainter& p, Name n, const QColor& c) {
     case Title: stroke(); p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2, 2); p.drawLine(QPointF(8, 9.5), QPointF(16, 9.5)); p.drawLine(QPointF(12, 9.5), QPointF(12, 15.5)); break;
     case Fx: stroke(); { QPainterPath q; q.moveTo(4, 6); q.lineTo(10, 6); q.moveTo(4, 12); q.lineTo(9, 12); q.moveTo(7, 6); q.lineTo(7, 18); p.drawPath(q); } p.drawLine(QPointF(12, 10), QPointF(19, 19)); p.drawLine(QPointF(19, 10), QPointF(12, 19)); break;
     case Import: stroke(); p.drawLine(QPointF(12, 4), QPointF(12, 15)); p.drawLine(QPointF(7.5, 11), QPointF(12, 15.5)); p.drawLine(QPointF(16.5, 11), QPointF(12, 15.5)); { QPainterPath q; q.moveTo(4, 15); q.lineTo(4, 20); q.lineTo(20, 20); q.lineTo(20, 15); p.drawPath(q); } break;
+    case Mic: stroke(); p.drawRoundedRect(QRectF(9, 3, 6, 11), 3, 3); { QPainterPath q; q.moveTo(5.5, 11); q.cubicTo(5.5, 17.5, 18.5, 17.5, 18.5, 11); p.drawPath(q); } p.drawLine(QPointF(12, 17.5), QPointF(12, 21)); p.drawLine(QPointF(8.5, 21), QPointF(15.5, 21)); break;
     case Check: stroke(); { QPainterPath q; q.moveTo(5, 12.5); q.lineTo(10, 17.5); q.lineTo(19, 7); p.drawPath(q); } break;
     }
 }

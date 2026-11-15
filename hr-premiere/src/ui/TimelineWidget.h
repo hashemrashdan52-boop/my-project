@@ -33,6 +33,8 @@ public:
     double pixelsPerSecond() const { return m_pps; }
 
     QRectF clipRectForId(const QString& clipId);   // widget coordinates (for tests / scripting)
+    // Voice-over: shows a red "recording" band on an audio track.
+    void setRecording(int audioTrack, double start, double end);
     int targetVideoTrack() const { return m_targetV; }
     int targetAudioTrack() const { return m_targetA; }
 
@@ -45,6 +47,7 @@ signals:
     void filesDropped(const QStringList& paths, double time, int videoTrack, int audioTrack);
     void effectDropped(const QString& clipId, const QString& type);
     void titleRequested(double time, int videoTrack);
+    void voiceOverRequested(int audioTrack);
     void statusMessage(const QString& text);
     void contextMenuRequested(const QPoint& globalPos, const QString& clipId);
 
@@ -148,6 +151,8 @@ private:
     QPoint m_mouse;
     bool m_mouseIn = false;
     int m_markerIndex = -1;
+    int m_recTrack = -1;
+    double m_recStart = 0, m_recEnd = 0;
 
     // drag & drop preview
     bool m_dropActive = false;

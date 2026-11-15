@@ -179,6 +179,28 @@ void remove(Timeline& tl, const QSet<QString>& ids, bool ripple) {
     }
 }
 
+int cutRange(Timeline& tl, double s, double e, bool ripple) {
+    if (e - s < kMinDur) return 0;
+    splitAllAt(tl, e);
+    splitAllAt(tl, s);
+    QSet<QString> ids;
+    for (const auto* tracks : {&tl.video, &tl.audio})
+        for (const Track& tr : *tracks) {
+            if (tr.locked) continue;
+            for (const Clip& c : tr.clips)
+                if (c.start >= s - kEps && c.end() <= e + kEps) ids.insert(c.id);
+        }
+    remove(tl, ids, ripple);
+    return int(ids.size());
+}
+
+int cutRanges(Timeline& tl, QVector<TimeRange> ranges, bool ripple) {
+    std::sort(ranges.begin(), ranges.end(), [](const TimeRange& a, const TimeRange& b) { return a.start > b.start; });
+    int n = 0;
+    for (const TimeRange& r : ranges) n += cutRange(tl, r.start, r.end, ripple);
+    return n;
+}
+
 Timeline moved(const Timeline& base, const QSet<QString>& ids, double dt, int dTrack, TrackType primary) {
     Timeline tl = base;
     struct M { Clip c; TrackType type; int track; };

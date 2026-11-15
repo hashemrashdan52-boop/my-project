@@ -19,6 +19,8 @@
 #include <QMimeData>
 #include <QScreen>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QDir>
 #include <QStatusBar>
 #include <QTimer>
 #include <QUrl>
@@ -100,6 +102,7 @@ void MainWindow::buildUi() {
     // --- workspace bar -----------------------------------------------------
     m_workspaceBar = new WorkspaceBar(this);
     connect(m_workspaceBar, &WorkspaceBar::workspaceSelected, this, &MainWindow::applyWorkspace);
+    connect(m_workspaceBar, &WorkspaceBar::logoClicked, this, [this] { OwnershipDialog(this).exec(); });
 
     // --- monitors -----------------------------------------------------------
     m_programMon = new MonitorPanel(m_program, MonitorPanel::Program, this);
@@ -192,6 +195,9 @@ void MainWindow::buildUi() {
     hl->setSpacing(6);
     m_tlName = new QLabel("Sequence 01");
     m_tlName->setStyleSheet("font-weight:600;");
+    m_recLabel = new QLabel;
+    m_recLabel->setStyleSheet("color:#ff4d57; font-weight:700;");
+    m_recLabel->hide();
     m_tlTimecode = new QLabel("00:00:00:00");
     m_tlTimecode->setStyleSheet(QString("color:%1; font-size:18px; font-weight:600; font-family:'DejaVu Sans Mono',Consolas,monospace;")
                                     .arg(theme::accentHi.name()));
@@ -213,6 +219,8 @@ void MainWindow::buildUi() {
     hl->addWidget(m_tlName);
     hl->addSpacing(16);
     hl->addWidget(m_tlTimecode);
+    hl->addSpacing(14);
+    hl->addWidget(m_recLabel);
     hl->addStretch();
     hl->addWidget(m_snapBtn);
     hl->addWidget(m_linkBtn);
@@ -257,6 +265,25 @@ void MainWindow::buildUi() {
     });
     connect(m_timeline, &TimelineWidget::effectDropped, this, &MainWindow::applyEffect);
     connect(m_timeline, &TimelineWidget::titleRequested, this, &MainWindow::addTitle);
+    connect(m_timeline, &TimelineWidget::voiceOverRequested, this, &MainWindow::toggleVoiceOver);
+    m_voTimer = new QTimer(this);
+    m_voTimer->setInterval(100);
+    connect(m_voTimer, &QTimer::timeout, this, &MainWindow::updateRecIndicator);
+    m_voCountdown = new QTimer(this);
+    m_voCountdown->setInterval(1000);
+    connect(m_voCountdown, &QTimer::timeout, this, [this] {
+        if (--m_voCount > 0) {
+            m_recLabel->setText(QString("Recording in %1…").arg(m_voCount));
+        } else {
+            m_voCountdown->stop();
+            beginVoiceOver();
+        }
+    });
+    connect(&m_recorder, &VoiceRecorder::level, this, [this](float l) { m_meters->setLevels(l, l); });
+    connect(&m_recorder, &VoiceRecorder::failed, this, [this](const QString& msg) {
+        setStatus(msg);
+        finishVoiceOver(false);
+    });
     connect(m_timeline, &TimelineWidget::statusMessage, this, [this](const QString& s) { setStatus(s.isEmpty() ? "Ready" : s); });
     connect(m_timeline, &TimelineWidget::contextMenuRequested, this, &MainWindow::showClipMenu);
 
@@ -339,6 +366,12 @@ void MainWindow::buildMenus() {
     QMenu* seq = mb->addMenu("&Sequence");
     addAction(seq, "Sequence Settings…", QKeySequence(), [this] { sequenceSettings(); });
     seq->addSeparator();
+    addAction(seq, "Record Voice-over (microphone)", QKeySequence("Ctrl+Shift+R"), [this] { toggleVoiceOver(m_timeline->targetAudioTrack()); });
+    QAction* hear = seq->addAction("Hear Sequence Audio While Recording (use headphones)");
+    hear->setCheckable(true);
+    hear->setChecked(QSettings().value("voiceover/hear", false).toBool());
+    connect(hear, &QAction::toggled, this, [](bool on) { QSettings().setValue("voiceover/hear", on); });
+    seq->addSeparator();
     addAction(seq, "Insert from Source", QKeySequence(Qt::Key_Comma), [this] { insertFromSource(true); });
     addAction(seq, "Overwrite from Source", QKeySequence(Qt::Key_Period), [this] { insertFromSource(false); });
     seq->addSeparator();
@@ -399,6 +432,7 @@ void MainWindow::buildMenus() {
     // ---- Help
     QMenu* help = mb->addMenu("&Help");
     addAction(help, "Keyboard Shortcuts", QKeySequence("Ctrl+/"), [this] { ShortcutsDialog(this).exec(); });
+    addAction(help, "الملكية  ·  Ownership", QKeySequence(), [this] { OwnershipDialog(this).exec(); });
     addAction(help, "About HR Premiere", QKeySequence(), [this] { AboutDialog(this).exec(); });
 }
 
@@ -558,6 +592,7 @@ void MainWindow::autoPlace(const QStringList& paths) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
+    if (m_voRecording || m_voCountdown->isActive()) finishVoiceOver(true);
     if (!maybeSave()) {
         e->ignore();
         return;
@@ -621,7 +656,13 @@ void MainWindow::onProgramPosition(double t) {
     m_tlTimecode->setText(formatTimecode(t, m_program->fps()));
 }
 
-void MainWindow::togglePlay() { activePlayer()->toggle(); }
+void MainWindow::togglePlay() {
+    if (m_voRecording || m_voCountdown->isActive()) {
+        finishVoiceOver(true);   // Space ends a voice-over (like in Premiere)
+        return;
+    }
+    activePlayer()->toggle();
+}
 
 void MainWindow::loadSource(const QString& id) {
     const MediaItem* m = m_project.mediaById(id);
@@ -921,6 +962,102 @@ void MainWindow::removeLastTrack(TrackType t) {
         return;
     }
     m_project.edit("Delete track", [&](Timeline& timeline) { ops::removeTrack(timeline, t, idx); });
+}
+
+// ---------------------------------------------------------------------------- voice-over
+QString MainWindow::voiceOverPath() const {
+    QDir dir;
+    if (!m_project.filePath().isEmpty())
+        dir = QDir(QFileInfo(m_project.filePath()).absolutePath() + "/" + m_project.name() + " voice-overs");
+    else
+        dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/voice-overs");
+    dir.mkpath(".");
+    for (int i = 1; i < 10000; ++i) {
+        const QString f = dir.filePath(QString("Voice-over %1.wav").arg(i, 2, 10, QLatin1Char('0')));
+        if (!QFileInfo::exists(f)) return f;
+    }
+    return dir.filePath("Voice-over.wav");
+}
+
+void MainWindow::toggleVoiceOver(int audioTrack) {
+    if (m_voRecording || m_voCountdown->isActive()) {
+        finishVoiceOver(true);
+        return;
+    }
+    if (!VoiceRecorder::hasMicrophone()) {
+        QMessageBox::information(this, "Voice-over",
+                                 "No microphone was found.\n\nConnect a microphone (or headset) and make sure Windows allows "
+                                 "desktop apps to use it: Settings > Privacy & security > Microphone.");
+        return;
+    }
+    if (audioTrack < 0 || audioTrack >= m_project.timeline().audio.size()) return;
+    if (m_project.timeline().audio[audioTrack].locked) {
+        setStatus("That audio track is locked");
+        return;
+    }
+    m_voTrack = audioTrack;
+    m_voStart = snapToFrame(m_program->position(), m_project.timeline().fps);
+    if (m_program->isPlaying()) m_program->pause();
+    m_voCount = 3;
+    m_recLabel->setText("Recording in 3…");
+    m_recLabel->show();
+    m_timeline->setRecording(m_voTrack, m_voStart, m_voStart);
+    m_voCountdown->start();
+    setStatus("Voice-over: get ready – press Space or the microphone button again to stop");
+}
+
+void MainWindow::updateRecIndicator() {
+    const double secs = m_recorder.seconds();
+    m_timeline->setRecording(m_voTrack, m_voStart, m_voStart + secs);
+    m_recLabel->setText(QString("● REC  %1  (%2)").arg(formatTimecode(secs, m_project.timeline().fps), VoiceRecorder::deviceName()));
+}
+
+void MainWindow::beginVoiceOver() {
+    m_voPath = voiceOverPath();
+    QString err;
+    if (!m_recorder.start(m_voPath, &err)) {
+        QMessageBox::warning(this, "Voice-over", err);
+        finishVoiceOver(false);
+        return;
+    }
+    m_voRecording = true;
+    m_voTimer->start();
+    // the picture plays along so you can talk over it; the sequence sound is muted unless you asked to hear it
+    m_program->setAudioMuted(!QSettings().value("voiceover/hear", false).toBool());
+    if (m_program->duration() > 0) m_program->play();
+    updateRecIndicator();
+}
+
+void MainWindow::finishVoiceOver(bool keep) {
+    const bool wasCounting = m_voCountdown->isActive();
+    m_voCountdown->stop();
+    m_voTimer->stop();
+    double secs = 0;
+    if (m_voRecording) secs = m_recorder.stop();
+    m_voRecording = false;
+    if (m_program->isPlaying()) m_program->pause();
+    m_program->setAudioMuted(false);
+    m_recLabel->hide();
+    m_timeline->setRecording(-1, 0, 0);
+    m_meters->setLevels(0, 0);
+    if (wasCounting) {
+        setStatus("Voice-over cancelled");
+        return;
+    }
+    if (!keep || secs < 0.2) {
+        if (!m_voPath.isEmpty()) QFile::remove(m_voPath);
+        if (keep) setStatus("Recording too short – nothing was added");
+        m_voPath.clear();
+        return;
+    }
+    const QStringList ids = importFiles({m_voPath}, true);
+    m_voPath.clear();
+    if (ids.isEmpty()) {
+        setStatus("The recording could not be imported");
+        return;
+    }
+    addMediaToTimeline(ids, m_voStart, m_timeline->targetVideoTrack(), m_voTrack, false);
+    setStatus(QString("Voice-over added to A%1 (%2 s)").arg(m_voTrack + 1).arg(secs, 0, 'f', 1));
 }
 
 void MainWindow::showClipMenu(const QPoint& pos, const QString& clipId) {

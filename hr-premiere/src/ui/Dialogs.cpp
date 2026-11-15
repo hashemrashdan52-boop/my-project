@@ -315,13 +315,156 @@ AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent) {
     auto* ok = new QPushButton("OK");
     ok->setObjectName("primary");
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
+    auto* owner = new QPushButton("الملكية  ·  Ownership");
+    connect(owner, &QPushButton::clicked, this, [this] { OwnershipDialog(this).exec(); });
     lay->addWidget(logo);
     lay->addWidget(name);
     lay->addWidget(ver);
     lay->addSpacing(6);
     lay->addWidget(desc);
     lay->addStretch();
+    auto* row = new QHBoxLayout;
+    row->addStretch();
+    row->addWidget(owner);
+    row->addWidget(ok);
+    row->addStretch();
+    lay->addLayout(row);
+}
+
+// ===================================================================== Ownership
+static QPixmap pixmapFromResource(const QString& path, QSize box) {
+    const qreal dpr = 2.0;
+    QPixmap pm(path);
+    pm = pm.scaled(QSize(int(box.width() * dpr), int(box.height() * dpr)), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
+OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
+    setWindowTitle("الملكية · Ownership");
+    setLayoutDirection(Qt::RightToLeft);   // Arabic page: the first card is on the right
+    setMinimumSize(780, 660);
+
+    // animated background: red particles drifting over the dark page
+    connect(&m_timer, &QTimer::timeout, this, [this] {
+        m_field.update(double(m_clock.restart()));
+        update();
+    });
+    m_timer.setInterval(16);
+
+    auto* title = new QLabel("الملكية");
+    title->setAlignment(Qt::AlignCenter);
+    title->setStyleSheet("font-size:30px; font-weight:800; background:transparent;");
+    auto* subtitle = new QLabel("من يملك البرنامج  ·  Who owns this program");
+    subtitle->setAlignment(Qt::AlignCenter);
+    subtitle->setStyleSheet("color:#8d8d8d; background:transparent;");
+
+    // One card = a logo (with its name) and, optionally, a line of text.  Semi-transparent so the particles
+    // keep flowing behind it.
+    auto card = [](const QString& border, QWidget* logo, const QString& roleAr, const QString& roleEn, const QString& roleColor) {
+        auto* f = new QFrame;
+        f->setObjectName("ownerCard");
+        f->setAttribute(Qt::WA_StyledBackground, true);
+        f->setStyleSheet(QString("QFrame#ownerCard { background: rgba(18,18,22,160); border:2px solid %1; border-radius:18px; }"
+                                 "QFrame#ownerCard QLabel { background:transparent; }").arg(border));
+        f->setMinimumSize(330, 420);
+        auto* v = new QVBoxLayout(f);
+        v->setContentsMargins(24, 26, 24, 24);
+        v->setSpacing(10);
+        v->addStretch();
+        v->addWidget(logo, 0, Qt::AlignCenter);
+        v->addStretch();
+        if (!roleAr.isEmpty()) {
+            auto* line = new QFrame;
+            line->setFrameShape(QFrame::HLine);
+            line->setStyleSheet("color:#3b3b3b; background:transparent;");
+            v->addWidget(line);
+            auto* ar = new QLabel(roleAr);
+            ar->setAlignment(Qt::AlignCenter);
+            ar->setStyleSheet(QString("font-size:22px; font-weight:800; color:%1;").arg(roleColor));
+            auto* en = new QLabel(roleEn);
+            en->setAlignment(Qt::AlignCenter);
+            en->setStyleSheet("color:#8d8d8d;");
+            v->addWidget(ar);
+            v->addWidget(en);
+        }
+        return f;
+    };
+
+    // --- Kaylar: only the logo and the name (no text)
+    auto* kaylarLogo = new QWidget;
+    auto* kl = new QVBoxLayout(kaylarLogo);
+    kl->setContentsMargins(0, 0, 0, 0);
+    kl->setSpacing(14);
+    auto* character = new QLabel;
+    character->setPixmap(pixmapFromResource(":/kaylar_logo.png", QSize(230, 290)));
+    character->setAlignment(Qt::AlignCenter);
+    auto* word = new QLabel;
+    word->setPixmap(pixmapFromResource(":/kaylar_wordmark.png", QSize(240, 48)));
+    word->setAlignment(Qt::AlignCenter);
+    kl->addWidget(character);
+    kl->addWidget(word);
+
+    // --- HR: the logo and the name; HR is the owner and the main developer
+    auto* hrLogo = new QWidget;
+    auto* hl = new QVBoxLayout(hrLogo);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(12);
+    auto* hrImg = new QLabel;
+    hrImg->setPixmap(icons::logo(190));
+    hrImg->setAlignment(Qt::AlignCenter);
+    auto* hrName = new QLabel("HR");
+    hrName->setAlignment(Qt::AlignCenter);
+    hrName->setStyleSheet("font-size:30px; font-weight:800; letter-spacing:2px;");
+    hl->addWidget(hrImg);
+    hl->addWidget(hrName);
+
+    auto* cards = new QHBoxLayout;
+    cards->setSpacing(26);
+    cards->addWidget(card("#ff3b3b", kaylarLogo, QString(), QString(), QString()));
+    cards->addWidget(card("#9184d9", hrLogo, "المالك والمطور الأساسي", "Owner & main developer", "#b4a9f2"));
+
+    auto* ok = new QPushButton("OK");
+    ok->setObjectName("primary");
+    connect(ok, &QPushButton::clicked, this, &QDialog::accept);
+    auto* foot = new QLabel(QString("HR Premiere  ·  v%1").arg(QCoreApplication::applicationVersion()));
+    foot->setAlignment(Qt::AlignCenter);
+    foot->setStyleSheet("color:#8d8d8d; background:transparent;");
+
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(30, 26, 30, 22);
+    lay->setSpacing(10);
+    lay->addWidget(title);
+    lay->addWidget(subtitle);
+    lay->addSpacing(8);
+    lay->addLayout(cards, 1);
+    lay->addSpacing(6);
+    lay->addWidget(foot);
     lay->addWidget(ok, 0, Qt::AlignCenter);
+    m_field.resize(QSizeF(size()));
+}
+
+void OwnershipDialog::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), QColor("#0b0b0e"));
+    m_field.paint(p);
+}
+
+void OwnershipDialog::resizeEvent(QResizeEvent* e) {
+    QDialog::resizeEvent(e);
+    m_field.resize(QSizeF(size()));
+}
+
+void OwnershipDialog::showEvent(QShowEvent* e) {
+    QDialog::showEvent(e);
+    m_field.resize(QSizeF(size()));
+    m_clock.start();
+    m_timer.start();
+}
+
+void OwnershipDialog::hideEvent(QHideEvent* e) {
+    m_timer.stop();
+    QDialog::hideEvent(e);
 }
 
 // ===================================================================== Shortcuts

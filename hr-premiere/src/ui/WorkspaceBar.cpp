@@ -71,6 +71,10 @@ void WorkspaceBar::paintEvent(QPaintEvent*) {
 }
 
 void WorkspaceBar::mousePressEvent(QMouseEvent* e) {
+    if (QRectF(8, 0, 170, height()).contains(e->position())) {
+        emit logoClicked();
+        return;
+    }
     for (int i = 0; i < m_names.size(); ++i)
         if (tabRect(i).contains(e->position())) {
             m_current = i;
@@ -85,7 +89,9 @@ void WorkspaceBar::mouseMoveEvent(QMouseEvent* e) {
     for (int i = 0; i < m_names.size(); ++i)
         if (tabRect(i).contains(e->position())) h = i;
     if (h != m_hover) { m_hover = h; update(); }
-    setCursor(h >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    const bool onLogo = QRectF(8, 0, 170, height()).contains(e->position());
+    setCursor(h >= 0 || onLogo ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    if (onLogo) setToolTip("الملكية · Ownership"); else setToolTip(QString());
 }
 
 void WorkspaceBar::leaveEvent(QEvent*) {

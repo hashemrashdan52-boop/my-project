@@ -48,6 +48,9 @@ add_library(hrcore STATIC
     src/engine/AudioOutput.cpp
     src/engine/Player.cpp
     src/engine/Exporter.cpp
+    src/engine/VoiceRecorder.cpp
+    src/ai/Silence.cpp
+    src/ai/Scenes.cpp
 )
 target_include_directories(hrcore PUBLIC src)
 target_link_libraries(hrcore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg PkgConfig::FFMPEG)

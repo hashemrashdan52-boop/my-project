@@ -9,7 +9,7 @@ enum Name {
     Play, Pause, StepBack, StepForward, ToStart, ToEnd, MarkIn, MarkOut, Insert, Overwrite, Camera,
     Selection, TrackForward, Ripple, Razor, Hand, Zoom, Type,
     Magnet, Link, Marker, Wrench, Eye, EyeOff, Lock, Unlock, Speaker, SpeakerOff,
-    Folder, ListView, IconView, Search, Trash, Plus, Film, Music, ImageFile, Title, Fx, Import, Check
+    Folder, ListView, IconView, Search, Trash, Plus, Film, Music, ImageFile, Title, Fx, Import, Check, Mic
 };
 
 // Vector icon drawn in code, tinted with `color`; `active` is used for the checked/on state.

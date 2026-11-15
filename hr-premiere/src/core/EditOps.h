@@ -24,6 +24,12 @@ bool splitAt(Timeline& tl, const QString& clipId, double t);
 // Splits every unlocked track at t ("Add Edit to All Tracks"). Returns #clips split.
 int splitAllAt(Timeline& tl, double t);
 
+// Removes the time range [s,e) from every unlocked track (splitting clips at both ends, keeping linked
+// pairs together) and, with ripple, closes the gap.  Returns the number of clips removed.
+int cutRange(Timeline& tl, double s, double e, bool ripple = true);
+// Several ranges at once; they are processed from the last to the first so earlier times stay valid.
+int cutRanges(Timeline& tl, QVector<TimeRange> ranges, bool ripple = true);
+
 // Deletes clips; ripple closes the gaps on every track.
 void remove(Timeline& tl, const QSet<QString>& ids, bool ripple);
 

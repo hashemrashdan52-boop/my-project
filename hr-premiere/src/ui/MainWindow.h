@@ -9,11 +9,13 @@
 #include "WorkspaceBar.h"
 #include "core/Project.h"
 #include "engine/Player.h"
+#include "engine/VoiceRecorder.h"
 #include "media/MediaAssets.h"
 
 #include <QDockWidget>
 #include <QLabel>
 #include <QMainWindow>
+#include <QTimer>
 #include <QToolButton>
 #include <QUndoView>
 
@@ -96,6 +98,13 @@ private:
     void setStatus(const QString& text);
     void updateDockTitles();
 
+    // voice-over
+    void toggleVoiceOver(int audioTrack);
+    void beginVoiceOver();
+    void updateRecIndicator();
+    void finishVoiceOver(bool keep);
+    QString voiceOverPath() const;
+
     Project m_project;
     MediaAssets m_assets;
     Player* m_program;
@@ -121,6 +130,16 @@ private:
 
     QDockWidget *m_dockSource = nullptr, *m_dockEffectControls = nullptr, *m_dockProgram = nullptr,
                 *m_dockProject = nullptr, *m_dockEffects = nullptr, *m_dockHistory = nullptr;
+
+    VoiceRecorder m_recorder;
+    QTimer* m_voTimer = nullptr;       // refreshes the REC indicator and the recording band
+    QTimer* m_voCountdown = nullptr;
+    QLabel* m_recLabel = nullptr;
+    int m_voTrack = 0;
+    int m_voCount = 0;
+    double m_voStart = 0;
+    QString m_voPath;
+    bool m_voRecording = false;
 
     QVector<ClipCopy> m_clipboard;
     bool m_restoreLayout;

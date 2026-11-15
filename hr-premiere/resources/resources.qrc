@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>logo.svg</file>
+        <file>kaylar_logo.png</file>
+        <file>kaylar_wordmark.png</file>
     </qresource>
 </RCC>
