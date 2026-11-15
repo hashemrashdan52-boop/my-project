@@ -1,4 +1,5 @@
 #pragma once
+#include "AiPanel.h"
 #include "AudioMeters.h"
 #include "EffectControlsPanel.h"
 #include "EffectsBrowser.h"
@@ -129,7 +130,8 @@ private:
     QLabel* m_status = nullptr;
 
     QDockWidget *m_dockSource = nullptr, *m_dockEffectControls = nullptr, *m_dockProgram = nullptr,
-                *m_dockProject = nullptr, *m_dockEffects = nullptr, *m_dockHistory = nullptr;
+                *m_dockProject = nullptr, *m_dockEffects = nullptr, *m_dockHistory = nullptr, *m_dockAi = nullptr;
+    AiPanel* m_ai = nullptr;
 
     VoiceRecorder m_recorder;
     QTimer* m_voTimer = nullptr;       // refreshes the REC indicator and the recording band

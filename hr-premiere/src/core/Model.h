@@ -15,6 +15,12 @@ enum class TrackType { Video, Audio };
 
 QString newId();
 
+// One sentence / phrase of recognised speech (seconds inside the media file).
+struct TranscriptSegment {
+    double start = 0, end = 0;
+    QString text;
+};
+
 // One imported file in the Project panel.
 struct MediaItem {
     QString id;
@@ -28,6 +34,8 @@ struct MediaItem {
     int sampleRate = 0, channels = 0;
     double markIn = -1, markOut = -1;  // Source monitor marks (-1 = not set)
     bool offline = false;
+    QVector<TranscriptSegment> transcript;  // filled by the AI speech tool
+    QString transcriptLanguage, transcriptModel;
 };
 
 // A clip placed on a track.  The renderer works on copies of the Timeline in other

@@ -25,7 +25,7 @@ protected:
 
 private:
     QRectF tabRect(int i) const;
-    QStringList m_names{"Assembly", "Editing", "Color", "Effects", "Audio"};
+    QStringList m_names{"Assembly", "Editing", "Color", "Effects", "Audio", "AI"};
     int m_current = 1, m_hover = -1;
     QString m_project = "Untitled";
     bool m_dirty = false;

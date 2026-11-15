@@ -1,6 +1,10 @@
 // Test-suite for the HR Premiere engine: editing operations, project files, FFmpeg
 // decoding, compositing, audio mixing and the exporter.  The media tests generate their
 // own clips with the ffmpeg command line tool so no binary fixtures are needed.
+#include "ai/Scenes.h"
+#include "ai/Silence.h"
+#include "ai/Transcript.h"
+#include "ai/Whisper.h"
 #include "core/EditOps.h"
 #include "core/Project.h"
 #include "core/Util.h"
@@ -9,10 +13,17 @@
 #include "engine/Exporter.h"
 #include "engine/Renderer.h"
 #include "media/AudioDecoder.h"
+#include "media/MediaAssets.h"
 #include "media/MediaProbe.h"
 #include "media/VideoDecoder.h"
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QSignalSpy>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QEventLoop>
+#include <QTimer>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcess>
@@ -47,6 +58,79 @@ static MediaItem fakeVideo(const QString& name, double dur, bool audio = true) {
 }
 
 static QColor centerColor(const QImage& img) { return QColor(img.pixel(img.width() / 2, img.height() / 2)); }
+
+// A minimal HTTP server for the model download tests: "/ok" -> 300000 bytes, "/small" -> 10 bytes, anything else 404.
+class TinyHttpServer : public QObject {
+public:
+    explicit TinyHttpServer(QObject* parent = nullptr) : QObject(parent) {
+        listen();
+    }
+    quint16 port() const { return m_server.serverPort(); }
+    QByteArray okBody() const { return QByteArray(300000, 'x'); }
+
+private:
+    void listen() {
+        m_server.listen(QHostAddress::LocalHost);
+        connect(&m_server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket* sock = m_server.nextPendingConnection()) {
+                connect(sock, &QTcpSocket::readyRead, sock, [this, sock] {
+                    const QByteArray req = sock->readAll();
+                    const QString line = QString::fromLatin1(req.left(req.indexOf("\r\n")));
+                    QByteArray body;
+                    QByteArray status = "200 OK";
+                    if (line.contains("/ok")) body = okBody();
+                    else if (line.contains("/small")) body = QByteArray(10, 'y');
+                    else { status = "404 Not Found"; body = "nope"; }
+                    sock->write("HTTP/1.1 " + status + "\r\nContent-Length: " + QByteArray::number(body.size()) +
+                                "\r\nConnection: close\r\n\r\n" + body);
+                    sock->disconnectFromHost();
+                });
+            }
+        });
+    }
+    QTcpServer m_server;
+};
+
+struct FakeFfmpegEnv {
+    QTemporaryDir aiDir;
+    QByteArray oldFfmpeg;
+    bool had;
+    FakeFfmpegEnv() {
+        had = qEnvironmentVariableIsSet("HR_FFMPEG");
+        oldFfmpeg = qgetenv("HR_FFMPEG");
+#ifdef Q_OS_WIN
+        const QString fake = QCoreApplication::applicationDirPath() + "/fake_ffmpeg.exe";
+#else
+        const QString fake = QCoreApplication::applicationDirPath() + "/fake_ffmpeg";
+#endif
+        qputenv("HR_FFMPEG", fake.toUtf8());
+        qputenv("HR_AI_DIR", aiDir.path().toUtf8());
+        QFile m(aiDir.filePath("ggml-test.bin"));
+        m.open(QIODevice::WriteOnly);
+        m.write(QByteArray(2000, 'm'));
+        QFile v(aiDir.filePath("ggml-silero-v5.1.2.bin"));
+        v.open(QIODevice::WriteOnly);
+        v.write(QByteArray(500 * 1024, 'v'));
+    }
+    ~FakeFfmpegEnv() {
+        qunsetenv("HR_AI_DIR");
+        qunsetenv("FAKE_FFMPEG_FAIL");
+        qunsetenv("FAKE_FFMPEG_FAIL_VAD");
+        if (had) qputenv("HR_FFMPEG", oldFfmpeg); else qunsetenv("HR_FFMPEG");
+    }
+    static ai::Transcriber::Request request(const QString& media) {
+        ai::Transcriber::Request r;
+        r.mediaId = "m1";
+        r.mediaPath = media;
+        r.duration = 13;
+        r.language = "auto";
+        r.model.id = "test";
+        r.model.file = "ggml-test.bin";
+        r.model.minBytes = 1000;
+        return r;
+    }
+};
+
 
 class HrTests : public QObject {
     Q_OBJECT
@@ -413,6 +497,353 @@ private slots:
         for (int i = 0; i < 4800; ++i) { pl = std::max(pl, std::fabs(a[size_t(2 * i)])); pr = std::max(pr, std::fabs(a[size_t(2 * i + 1)])); }
         QVERIFY(pl > 0.05f);
         QVERIFY(pr < 0.001f);
+    }
+
+
+    // ------------------------------------------------------------------ AI helpers: cutting ranges
+    void cutRangeKeepsLinkedPairsAndRipples() {
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("a.mp4", 30, true);
+        ops::placeClips(tl, ops::makeClips(m, 0, 10, 0), 0, 0, false);
+        ops::placeClips(tl, ops::makeClips(m, 10, 5, 10), 0, 0, false);
+        const int removed = ops::cutRange(tl, 3.0, 5.0, true);
+        QVERIFY(removed >= 2);                                   // picture and sound of the middle piece
+        QVERIFY(std::abs(tl.duration() - 13.0) < 1e-6);
+        QCOMPARE(tl.video[0].clips.size(), 3);
+        QCOMPARE(tl.audio[0].clips.size(), 3);
+        // the piece after the cut continues where the removed part ended, and starts right at the cut
+        QVERIFY(std::abs(tl.video[0].clips[1].start - 3.0) < 1e-6);
+        QVERIFY(std::abs(tl.video[0].clips[1].srcIn - 5.0) < 1e-6);
+        QVERIFY(std::abs(tl.video[0].clips[2].start - 8.0) < 1e-6);   // the second clip moved 2 s earlier
+        // picture and sound stay paired, but the two halves of the cut clip are no longer linked together
+        QCOMPARE(tl.video[0].clips[0].linkId, tl.audio[0].clips[0].linkId);
+        QCOMPARE(tl.video[0].clips[1].linkId, tl.audio[0].clips[1].linkId);
+        QVERIFY(tl.video[0].clips[0].linkId != tl.video[0].clips[1].linkId);
+    }
+
+    void cutRangesWorksBackwardsAndSkipsLockedTracks() {
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("a.mp4", 30, true);
+        ops::placeClips(tl, ops::makeClips(m, 0, 10, 0), 0, 0, false);
+        ops::cutRanges(tl, {{2.0, 3.0}, {6.0, 8.0}}, true);
+        QVERIFY(std::abs(tl.duration() - 7.0) < 1e-6);
+        QCOMPARE(tl.video[0].clips.size(), 3);
+        QVERIFY(std::abs(tl.video[0].clips[2].srcIn - 8.0) < 1e-6);
+        // a locked track is left alone
+        Timeline locked = Timeline::makeDefault();
+        ops::placeClips(locked, ops::makeClips(m, 0, 10, 0), 0, 0, false);
+        locked.audio[0].locked = true;
+        ops::cutRange(locked, 2.0, 4.0, true);
+        QVERIFY(std::abs(locked.video[0].clips.last().end() - 8.0) < 1e-6);
+        QVERIFY(std::abs(locked.audio[0].clips.last().end() - 10.0) < 1e-6);
+    }
+
+    // ------------------------------------------------------------------ AI helpers: silence
+    static QVector<quint8> burstPeaks(std::initializer_list<std::pair<double, int>> parts) {   // seconds, level 0..255
+        QVector<quint8> v;
+        for (auto& pr : parts) for (int i = 0; i < int(pr.first * 100); ++i) v.push_back(quint8(pr.second));
+        return v;
+    }
+
+    void silenceFinderUsesThresholdLengthAndPadding() {
+        const QVector<quint8> peaks = burstPeaks({{1, 120}, {2, 1}, {1, 120}, {1.5, 1}, {1, 120}, {0.3, 1}, {1, 120}});
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("talk.mp4", 7.8, true);
+        m.id = "talk";
+        ops::placeClips(tl, ops::makeClips(m, 0, 7.8, 0), 0, 0, false);
+        auto provider = [&](const QString& id) -> const QVector<quint8>* { return id == "talk" ? &peaks : nullptr; };
+        ai::SilenceOptions o;                                      // -40 dB, 0.6 s, 0.12 s padding
+        const QVector<TimeRange> r = ai::findSilences(tl, provider, o);
+        QCOMPARE(r.size(), 2);                                     // the 0.3 s pause is too short to touch
+        QVERIFY2(std::abs(r[0].start - 1.12) < 0.04 && std::abs(r[0].end - 2.88) < 0.04, qPrintable(QString("%1-%2").arg(r[0].start).arg(r[0].end)));
+        QVERIFY2(std::abs(r[1].start - 4.12) < 0.04 && std::abs(r[1].end - 5.38) < 0.04, qPrintable(QString("%1-%2").arg(r[1].start).arg(r[1].end)));
+        // a stricter minimum length finds only the longer one
+        o.minSilence = 1.8;
+        QCOMPARE(ai::findSilences(tl, provider, o).size(), 1);
+        // lowering the clip volume turns quiet speech into "silence"
+        const QVector<quint8> quiet = burstPeaks({{3, 40}});       // about -16 dB
+        auto quietProvider = [&](const QString&) -> const QVector<quint8>* { return &quiet; };
+        Timeline q = Timeline::makeDefault();
+        ops::placeClips(q, ops::makeClips(m, 0, 3, 0), 0, 0, false);
+        QCOMPARE(ai::findSilences(q, quietProvider, ai::SilenceOptions()).size(), 0);
+        q.audio[0].clips[0].effect("volume")->set("level", -30.0);
+        QCOMPARE(ai::findSilences(q, quietProvider, ai::SilenceOptions()).size(), 1);
+        // unknown waveforms are treated as loud and reported
+        bool incomplete = false;
+        auto none = [](const QString&) -> const QVector<quint8>* { return nullptr; };
+        QCOMPARE(ai::findSilences(tl, none, ai::SilenceOptions(), &incomplete).size(), 0);
+        QVERIFY(incomplete);
+    }
+
+    void silenceFinderNeverCutsPlacesWithoutSound() {
+        const QVector<quint8> peaks = burstPeaks({{1, 120}, {0.2, 1}});
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("talk.mp4", 1.2, true);
+        m.id = "talk";
+        ops::placeClips(tl, ops::makeClips(m, 0, 1.2, 0), 0, 0, false);
+        tl.video[1].clips.push_back(ops::makeTitle(0, 12, "a long title with no sound"));   // 12 s of picture only
+        auto provider = [&](const QString&) -> const QVector<quint8>* { return &peaks; };
+        QCOMPARE(ai::findSilences(tl, provider, ai::SilenceOptions()).size(), 0);
+    }
+
+    void silenceFinderOnRealAudio() {
+        // 1 s tone, 2 s silence, 1 s tone, 1.5 s silence, 1 s tone
+        const QString wav = dir.filePath("pattern.wav");
+        QVERIFY(runFfmpeg({"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1", "-f", "lavfi", "-i",
+                           "anullsrc=r=48000:cl=mono:d=2", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
+                           "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1.5", "-f", "lavfi", "-i",
+                           "sine=frequency=440:sample_rate=48000:duration=1", "-filter_complex",
+                           "[0][1][2][3][4]concat=n=5:v=0:a=1,volume=4", "-ar", "48000", wav}));
+        Project p;
+        const MediaItem item = *p.mediaById(p.importFile(wav));
+        MediaAssets assets;
+        assets.request(item);
+        QEventLoop loop;
+        QTimer guard;
+        guard.setSingleShot(true);
+        connect(&guard, &QTimer::timeout, &loop, &QEventLoop::quit);
+        connect(&assets, &MediaAssets::updated, &loop, [&] { if (assets.get(item.id).wavesReady) loop.quit(); });
+        guard.start(10000);
+        if (!assets.get(item.id).wavesReady) loop.exec();
+        const MediaAsset asset = assets.get(item.id);
+        QVERIFY(asset.wavesReady);
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(item, 0, item.duration, 0), 0, 0, false);
+        auto provider = [&](const QString&) -> const QVector<quint8>* { return &asset.peaks100; };
+        const QVector<TimeRange> r = ai::findSilences(tl, provider, ai::SilenceOptions());
+        QCOMPARE(r.size(), 2);
+        QVERIFY2(std::abs(r[0].start - 1.12) < 0.1 && std::abs(r[0].end - 2.88) < 0.1, qPrintable(QString("%1-%2").arg(r[0].start).arg(r[0].end)));
+        QVERIFY2(std::abs(r[1].start - 4.12) < 0.1 && std::abs(r[1].end - 5.38) < 0.1, qPrintable(QString("%1-%2").arg(r[1].start).arg(r[1].end)));
+        // cutting them leaves just the three tones plus the padding
+        ops::cutRanges(tl, r, true);
+        QVERIFY2(std::abs(tl.duration() - (6.5 - 1.76 - 1.26)) < 0.15, qPrintable(QString::number(tl.duration())));
+    }
+
+    // ------------------------------------------------------------------ AI helpers: scenes
+    void sceneDetectorFindsHardCutsOnly() {
+        const QString clip = dir.filePath("three_scenes.mp4");
+        QVERIFY(runFfmpeg({"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2", "-f", "lavfi", "-i",
+                           "color=c=blue:s=320x180:r=30:d=2", "-f", "lavfi", "-i", "smptebars=size=320x180:rate=30:duration=2",
+                           "-filter_complex", "[0][1][2]concat=n=3:v=1:a=0,format=yuv420p", "-c:v", "libx264", clip}));
+        const QVector<double> cuts = ai::detectScenes(clip, ai::SceneOptions());
+        QCOMPARE(cuts.size(), 2);
+        QVERIFY2(std::abs(cuts[0] - 2.0) < 0.07, qPrintable(QString::number(cuts[0])));
+        QVERIFY2(std::abs(cuts[1] - 4.0) < 0.07, qPrintable(QString::number(cuts[1])));
+        // a single continuous shot (with lots of motion) has no cuts
+        const QString single = dir.filePath("one_scene.mp4");
+        QVERIFY(runFfmpeg({"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p", single}));
+        QCOMPARE(ai::detectScenes(single, ai::SceneOptions()).size(), 0);
+    }
+
+
+    // ------------------------------------------------------------------ AI speech: subtitles and text editing
+    void srtRoundTripKeepsArabicAndDropsAnnotations() {
+        const QString srt = QString::fromUtf8(
+            "1\r\n00:00:01,000 --> 00:00:03,500\r\nHello and welcome.\r\n\r\n"
+            "2\r\n00:00:04,000 --> 00:00:05,000\r\n[BLANK_AUDIO]\r\n\r\n"
+            "3\r\n00:01:02,250 --> 00:01:05,000\r\nمرحبا بكم\r\nفي القناة\r\n\r\n"
+            "4\r\n00:01:06,000 --> 00:01:07,000\r\n(upbeat music)\r\n\r\n");
+        const QVector<TranscriptSegment> segs = ai::parseSrt(srt);
+        QCOMPARE(segs.size(), 2);
+        QVERIFY(std::abs(segs[0].start - 1.0) < 1e-9 && std::abs(segs[0].end - 3.5) < 1e-9);
+        QCOMPARE(segs[1].text, QString::fromUtf8("مرحبا بكم في القناة"));   // two lines become one sentence
+        QVERIFY(std::abs(segs[1].start - 62.25) < 1e-9);
+        const QVector<TranscriptSegment> again = ai::parseSrt(ai::formatSrt(segs));
+        QCOMPARE(again.size(), 2);
+        QCOMPARE(again[1].text, segs[1].text);
+        QVERIFY(std::abs(again[1].end - 65.0) < 1e-3);
+        QVERIFY(ai::isNonSpeech("[Music]") && ai::isNonSpeech("♪♪") && ai::isNonSpeech("  ") && !ai::isNonSpeech("Hello"));
+    }
+
+    static MediaItem talkingMedia() {
+        MediaItem m = fakeVideo("talk.mp4", 30, true);
+        m.id = "talk";
+        m.transcript = {{1.0, 3.0, "first sentence"}, {5.0, 8.0, "second sentence"}, {12.0, 14.0, "third sentence"}};
+        return m;
+    }
+
+    void transcriptFollowsTrimmedAndMovedClips() {
+        const MediaItem m = talkingMedia();
+        Timeline tl = Timeline::makeDefault();
+        // the clip shows source seconds 4..13 (second sentence fully, third cut at 13) and starts at 20 s
+        ops::placeClips(tl, ops::makeClips(m, 4.0, 9.0, 20.0), 0, 0, false);
+        const QVector<ai::TimelineSegment> ts = ai::transcriptOnTimeline(tl, {m});
+        QCOMPARE(ts.size(), 2);
+        QCOMPARE(ts[0].text, QString("second sentence"));
+        QVERIFY(std::abs(ts[0].start - 21.0) < 1e-9 && std::abs(ts[0].end - 24.0) < 1e-9);
+        QCOMPARE(ts[1].text, QString("third sentence"));
+        QVERIFY(std::abs(ts[1].start - 28.0) < 1e-9 && std::abs(ts[1].end - 29.0) < 1e-9);   // clipped at the clip's end
+        // a muted track is ignored
+        tl.audio[0].enabled = false;
+        QCOMPARE(ai::transcriptOnTimeline(tl, {m}).size(), 0);
+    }
+
+    void deletingASentenceCutsPictureAndSound() {
+        const MediaItem m = talkingMedia();
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(m, 0.0, 20.0, 0.0), 0, 0, false);
+        const QVector<ai::TimelineSegment> ts = ai::transcriptOnTimeline(tl, {m});
+        QCOMPARE(ts.size(), 3);
+        ops::cutRange(tl, ts[1].start, ts[1].end, true);                 // delete the second sentence (5..8 s)
+        QVERIFY(std::abs(tl.duration() - 17.0) < 1e-6);
+        // the transcript now skips it, and the third sentence moved 3 s earlier
+        const QVector<ai::TimelineSegment> after = ai::transcriptOnTimeline(tl, {m});
+        QCOMPARE(after.size(), 2);
+        QCOMPARE(after[1].text, QString("third sentence"));
+        QVERIFY(std::abs(after[1].start - 9.0) < 1e-6);
+        QCOMPARE(tl.video[0].clips.size(), 2);
+        QCOMPARE(tl.audio[0].clips.size(), 2);
+    }
+
+    void keepOnlySelectedSentences() {
+        // keep the 1st and 3rd sentence of a 20 s clip, with 0.1 s of handle on each side
+        const QVector<TimeRange> cuts = ai::complementRanges({{1.0, 3.0}, {12.0, 14.0}}, 20.0, 0.1);
+        QCOMPARE(cuts.size(), 3);
+        QVERIFY(std::abs(cuts[0].start - 0.0) < 1e-9 && std::abs(cuts[0].end - 0.9) < 1e-9);
+        QVERIFY(std::abs(cuts[1].start - 3.1) < 1e-9 && std::abs(cuts[1].end - 11.9) < 1e-9);
+        QVERIFY(std::abs(cuts[2].start - 14.1) < 1e-9 && std::abs(cuts[2].end - 20.0) < 1e-9);
+        // overlapping handles merge
+        QCOMPARE(ai::mergeRanges({{0, 2}, {1.5, 4}, {6, 7}}).size(), 2);
+    }
+
+    void captionsAreSplitAndPlacedOnAFreeTrack() {
+        ai::TimelineSegment s;
+        s.start = 10;
+        s.end = 20;
+        s.text = "this is a rather long sentence that must be split into several shorter captions so it fits on the screen";
+        const QVector<ai::TimelineSegment> parts = ai::splitForCaptions({s}, 40);
+        QVERIFY(parts.size() >= 3);
+        QVERIFY(std::abs(parts.first().start - 10) < 1e-9 && std::abs(parts.last().end - 20) < 1e-6);
+        for (int i = 0; i < parts.size(); ++i) {
+            QVERIFY(parts[i].text.size() <= 40);
+            if (i) QVERIFY(std::abs(parts[i].start - parts[i - 1].end) < 1e-9);
+        }
+        Timeline tl = Timeline::makeDefault();                           // V1..V3 empty
+        const int track = ai::addCaptions(tl, parts);
+        QCOMPARE(track, 2);                                              // top-most free track
+        QCOMPARE(tl.video[2].clips.size(), parts.size());
+        QCOMPARE(tl.video[2].clips[0].kind, ClipKind::Title);
+        QVERIFY(std::abs(tl.video[2].clips[0].effect("motion")->num("position_y") - 36.0) < 1e-9);
+        // every track busy in that range -> a new track is added on top
+        for (int i = 0; i < tl.video.size(); ++i)
+            if (i != 2) tl.video[i].clips.push_back(ops::makeTitle(0, 30, "busy"));
+        const int track2 = ai::addCaptions(tl, parts);
+        QCOMPARE(track2, 3);
+        QCOMPARE(tl.video.size(), 4);
+    }
+
+    void transcriptIsSavedInTheProject() {
+        Project p;
+        const MediaItem item = *p.mediaById(p.importFile(red));
+        p.setTranscript(item.id, {{0.5, 1.5, QString::fromUtf8("مرحبا")}, {2.0, 3.0, "hello"}}, "ar", "small");
+        const QString file = dir.filePath("transcript.hrproj");
+        QVERIFY(p.save(file));
+        Project q;
+        QVERIFY(q.load(file));
+        const MediaItem* m = q.mediaById(item.id);
+        QVERIFY(m);
+        QCOMPARE(m->transcript.size(), 2);
+        QCOMPARE(m->transcript[0].text, QString::fromUtf8("مرحبا"));
+        QCOMPARE(m->transcriptModel, QString("small"));
+    }
+
+    // ------------------------------------------------------------------ AI speech: downloading models
+    void modelDownloadTriesMirrorsAndValidatesSize() {
+        QTemporaryDir aiDir;
+        qputenv("HR_AI_DIR", aiDir.path().toUtf8());
+        TinyHttpServer server;
+        const QString base = QString("http://127.0.0.1:%1").arg(server.port());
+        ai::ModelInfo m;
+        m.id = "t";
+        m.title = "Test model";
+        m.file = "ggml-dl.bin";
+        m.minBytes = 100000;
+        m.urls = {base + "/missing", base + "/small", base + "/ok"};   // 404, then a truncated file, then the real one
+        QVERIFY(!ai::AiModels::isInstalled(m));
+        ai::AiModels models;
+        QSignalSpy done(&models, &ai::AiModels::finished);
+        QSignalSpy prog(&models, &ai::AiModels::progress);
+        models.download(m);
+        QVERIFY(done.wait(15000));
+        QCOMPARE(done.at(0).at(0).toBool(), true);
+        QVERIFY(!prog.isEmpty());
+        QVERIFY(ai::AiModels::isInstalled(m));
+        QCOMPARE(QFileInfo(ai::AiModels::pathOf(m)).size(), qint64(300000));
+        QVERIFY(!QFileInfo::exists(ai::AiModels::pathOf(m) + ".part"));
+        // every mirror broken -> a clear failure and no half file left behind
+        ai::ModelInfo bad = m;
+        bad.file = "ggml-bad.bin";
+        bad.urls = {base + "/missing", base + "/small"};
+        QSignalSpy done2(&models, &ai::AiModels::finished);
+        models.download(bad);
+        QVERIFY(done2.wait(15000));
+        QCOMPARE(done2.at(0).at(0).toBool(), false);
+        QVERIFY(!ai::AiModels::isInstalled(bad));
+        QVERIFY(!QFileInfo::exists(ai::AiModels::pathOf(bad) + ".part"));
+        qunsetenv("HR_AI_DIR");
+    }
+
+    void modelListIsSane() {
+        const QVector<ai::ModelInfo> list = ai::AiModels::models();
+        QVERIFY(list.size() >= 4);
+        for (const ai::ModelInfo& m : list) {
+            QVERIFY(!m.urls.isEmpty() && m.urls[0].startsWith("https://"));
+            QVERIFY(m.file.endsWith(".bin"));
+            QVERIFY(m.minBytes > 0);
+        }
+        QVERIFY(ai::AiModels::modelById("small").valid());
+        QVERIFY(!ai::AiModels::modelById("nope").valid());
+    }
+
+    // ------------------------------------------------------------------ AI speech: running the recogniser
+    void transcriberParsesTheRecogniserOutput() {
+        FakeFfmpegEnv env;
+        QVERIFY(QFileInfo::exists(Exporter::findFfmpeg()));
+        QVERIFY(ai::Transcriber::supportsWhisper(Exporter::findFfmpeg()));
+        ai::Transcriber tr;
+        QSignalSpy done(&tr, &ai::Transcriber::finished);
+        QSignalSpy prog(&tr, &ai::Transcriber::progress);
+        tr.start(FakeFfmpegEnv::request(red));
+        QVERIFY(done.wait(15000));
+        QCOMPARE(done.at(0).at(0).toBool(), true);
+        const auto segs = done.at(0).at(1).value<QVector<TranscriptSegment>>();
+        QCOMPARE(segs.size(), 3);                                       // "[BLANK_AUDIO]" is dropped
+        QCOMPARE(segs[0].text, QString("Hello and welcome to the channel."));
+        QVERIFY(std::abs(segs[0].start - 0.2) < 1e-9 && std::abs(segs[0].end - 1.2) < 1e-9);
+        QCOMPARE(segs[2].text, QString::fromUtf8("مرحبا بكم في القناة"));
+        QVERIFY(!prog.isEmpty());                                       // out_time_us lines became progress
+        QVERIFY(!QFileInfo::exists(env.aiDir.filePath("transcript_m1.srt")));   // temp file cleaned up
+    }
+
+    void transcriberRetriesWithoutVadAndReportsFailures() {
+        FakeFfmpegEnv env;
+        {
+            qputenv("FAKE_FFMPEG_FAIL_VAD", "1");                       // the VAD model "does not work" -> second try without it
+            ai::Transcriber tr;
+            QSignalSpy done(&tr, &ai::Transcriber::finished);
+            tr.start(FakeFfmpegEnv::request(red));
+            QVERIFY(done.wait(15000));
+            QCOMPARE(done.at(0).at(0).toBool(), true);
+            QCOMPARE(done.at(0).at(1).value<QVector<TranscriptSegment>>().size(), 3);
+        }
+        {
+            qputenv("FAKE_FFMPEG_FAIL", "1");
+            ai::Transcriber tr;
+            QSignalSpy done(&tr, &ai::Transcriber::finished);
+            tr.start(FakeFfmpegEnv::request(red));
+            QVERIFY(done.wait(15000));
+            QCOMPARE(done.at(0).at(0).toBool(), false);
+            QVERIFY(done.at(0).at(2).toString().contains("simulated failure"));
+        }
+        {
+            qunsetenv("FAKE_FFMPEG_FAIL");
+            ai::Transcriber tr;
+            QSignalSpy done(&tr, &ai::Transcriber::finished);
+            ai::Transcriber::Request r = FakeFfmpegEnv::request(red);
+            r.model.file = "ggml-missing.bin";                          // not installed
+            tr.start(r);
+            QVERIFY(done.count() == 1 && !done.at(0).at(0).toBool());
+        }
     }
 
     // ------------------------------------------------------------------ export

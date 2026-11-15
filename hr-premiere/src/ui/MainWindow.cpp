@@ -138,6 +138,8 @@ void MainWindow::buildUi() {
     m_effectControls = new EffectControlsPanel(&m_project, this);
     m_effectsBrowser = new EffectsBrowser(this);
     m_history = new QUndoView(m_project.undoStack(), this);
+    m_ai = new AiPanel(&m_project, &m_assets, m_program, this);
+    connect(m_ai, &AiPanel::statusMessage, this, [this](const QString& t) { setStatus(t); });
     m_history->setEmptyLabel("Original");
 
     connect(m_projectPanel, &ProjectPanel::importRequested, this, &MainWindow::importDialog);
@@ -166,17 +168,19 @@ void MainWindow::buildUi() {
     m_dockProject = makeDock("Project", "dock_project", m_projectPanel);
     m_dockEffects = makeDock("Effects", "dock_effects", m_effectsBrowser);
     m_dockHistory = makeDock("History", "dock_history", m_history);
+    m_dockAi = makeDock("AI Assistant", "dock_ai", m_ai);
 
     addDockWidget(Qt::LeftDockWidgetArea, m_dockSource);
     addDockWidget(Qt::LeftDockWidgetArea, m_dockProject);
     splitDockWidget(m_dockSource, m_dockProject, Qt::Vertical);
     tabifyDockWidget(m_dockSource, m_dockEffectControls);
+    tabifyDockWidget(m_dockSource, m_dockAi);
     tabifyDockWidget(m_dockProject, m_dockEffects);
     tabifyDockWidget(m_dockProject, m_dockHistory);
     addDockWidget(Qt::TopDockWidgetArea, m_dockProgram);
     m_dockSource->raise();
     m_dockProject->raise();
-    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory}) {
+    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory, m_dockAi}) {
         connect(d, &QDockWidget::dockLocationChanged, this, [this] { QTimer::singleShot(0, this, &MainWindow::updateDockTitles); });
         connect(d, &QDockWidget::topLevelChanged, this, [this] { QTimer::singleShot(0, this, &MainWindow::updateDockTitles); });
     }
@@ -419,6 +423,19 @@ void MainWindow::buildMenus() {
         activePlayer()->seek(std::max(0.0, activePlayer()->duration() - 1.0 / activePlayer()->fps()));
     });
 
+    // ---- AI
+    QMenu* aiMenu = mb->addMenu("A&I");
+    auto showAi = [this] { m_dockAi->show(); m_dockAi->raise(); };
+    addAction(aiMenu, "Open AI Assistant", QKeySequence(), showAi);
+    aiMenu->addSeparator();
+    addAction(aiMenu, "Auto Edit the Sequence", QKeySequence(), [this, showAi] { showAi(); m_ai->autoEdit(true, true); });
+    addAction(aiMenu, "Transcribe Selected Clips (speech to text)", QKeySequence(), [this, showAi] { showAi(); m_ai->transcribeSelection(); });
+    addAction(aiMenu, "Add Captions from the Transcript", QKeySequence(), [this, showAi] { showAi(); m_ai->addCaptions(false); });
+    aiMenu->addSeparator();
+    addAction(aiMenu, "Remove Silences", QKeySequence(), [this, showAi] { showAi(); m_ai->removeSilences(); });
+    addAction(aiMenu, "Mark Scene Changes", QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(false); });
+    addAction(aiMenu, "Cut at Scene Changes", QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(true); });
+
     // ---- Window
     QMenu* win = mb->addMenu("&Window");
     QMenu* ws = win->addMenu("Workspaces");
@@ -426,7 +443,7 @@ void MainWindow::buildMenus() {
     ws->addSeparator();
     addAction(ws, "Reset to Saved Layout", QKeySequence(), [this] { applyWorkspace(m_workspace); });
     win->addSeparator();
-    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory})
+    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory, m_dockAi})
         win->addAction(d->toggleViewAction());
 
     // ---- Help
@@ -440,7 +457,7 @@ void MainWindow::buildMenus() {
 void MainWindow::applyWorkspace(const QString& name) {
     m_workspace = name;
     m_workspaceBar->setCurrent(name);
-    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory}) {
+    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory, m_dockAi}) {
         d->setFloating(false);
         d->show();
     }
@@ -451,6 +468,7 @@ void MainWindow::applyWorkspace(const QString& name) {
     else if (name == "Color") l = {0.34, 0.55, 0.68, m_dockEffectControls, m_dockProject};
     else if (name == "Effects") l = {0.36, 0.52, 0.55, m_dockEffectControls, m_dockEffects};
     else if (name == "Audio") l = {0.30, 0.36, 0.45, m_dockSource, m_dockProject};
+    else if (name == "AI") l = {0.42, 0.45, 0.78, m_dockAi, m_dockProject};
     l.top->raise();
     l.bottom->raise();
     const int body = H - 120;
@@ -462,7 +480,7 @@ void MainWindow::applyWorkspace(const QString& name) {
 void MainWindow::updateDockTitles() {
     // Tabbed panels already show their name on the tab, so their own title bar is hidden;
     // panels that stand alone (or float) keep the normal title bar.
-    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory}) {
+    for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory, m_dockAi}) {
         const bool tabbed = !d->isFloating() && !tabifiedDockWidgets(d).isEmpty();
         if (tabbed) {
             if (!d->titleBarWidget()) {

@@ -10,6 +10,8 @@
 
 namespace hr {
 
+constexpr double kParticlePi = 3.14159265358979323846;
+
 // The animated background of the Ownership page (a Qt port of the WinForms particle code): drifting dots
 // that bounce off the edges, fade out towards the bottom and are joined by thin lines when two of them
 // come closer than 50 px.
@@ -94,7 +96,7 @@ private:
         m_particles.clear();
         auto* rng = QRandomGenerator::global();
         for (int i = 0; i < m_count; ++i) {
-            const double angle = rng->generateDouble() * 2.0 * M_PI;
+            const double angle = rng->generateDouble() * 2.0 * kParticlePi;
             const double speed = double(rng->bounded(1, 3));   // 1 or 2
             Particle p;
             p.pos = QPointF(rng->generateDouble() * m_size.width(), rng->generateDouble() * m_size.height());

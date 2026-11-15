@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia Svg Test)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia Svg Network Test)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavformat libavcodec libavutil libswscale libswresample)
@@ -51,9 +51,12 @@ add_library(hrcore STATIC
     src/engine/VoiceRecorder.cpp
     src/ai/Silence.cpp
     src/ai/Scenes.cpp
+    src/ai/Transcript.cpp
+    src/ai/Whisper.cpp
+    src/ai/TranscribeCli.cpp
 )
 target_include_directories(hrcore PUBLIC src)
-target_link_libraries(hrcore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg PkgConfig::FFMPEG)
+target_link_libraries(hrcore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg Qt6::Network PkgConfig::FFMPEG)
 
 # ---------------------------------------------------------------- application
 option(HR_BUILD_APP "Build the HRPremiere application (needs the UI sources)" ON)
@@ -71,6 +74,7 @@ if(HR_BUILD_APP)
         src/ui/AudioMeters.cpp
         src/ui/WorkspaceBar.cpp
         src/ui/Dialogs.cpp
+        src/ui/AiPanel.cpp
         src/ui/MainWindow.cpp
         resources/resources.qrc
     )
@@ -89,12 +93,15 @@ endif()
 enable_testing()
 add_executable(hr_tests tests/test_main.cpp)
 target_link_libraries(hr_tests PRIVATE hrcore Qt6::Test)
+add_executable(fake_ffmpeg tests/fake_ffmpeg.cpp)   # stand-in for ffmpeg in the speech-tool tests
+add_dependencies(hr_tests fake_ffmpeg)
 add_test(NAME hr_tests COMMAND hr_tests)
 set_tests_properties(hr_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 if(HR_BUILD_APP)
     add_executable(hr_ui_tests tests/test_ui.cpp)
     target_link_libraries(hr_ui_tests PRIVATE hrui Qt6::Test)
+    add_dependencies(hr_ui_tests fake_ffmpeg)
     add_test(NAME hr_ui_tests COMMAND hr_ui_tests)
     set_tests_properties(hr_ui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

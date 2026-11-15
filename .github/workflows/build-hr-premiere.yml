@@ -113,6 +113,35 @@ jobs:
           Write-Host "screenshot written: $size bytes"
           if ($size -lt 20000) { throw "the screenshot looks empty" }
 
+      - name: AI speech smoke test (real Whisper model, clean PATH)
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          # Make real speech with the built-in Windows voice, then let the packaged app understand it.
+          # This downloads the small "tiny" model from the public model host (no account) and runs the bundled
+          # ffmpeg's Whisper filter - exactly what the AI Assistant does for users.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+          Add-Type -AssemblyName System.Speech
+          $wav = Join-Path (Get-Location) "dist\speech_test.wav"
+          $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $synth.SetOutputToWaveFile($wav)
+          $synth.Speak("Hello. This is a test of the speech recognition. The quick brown fox jumps over the lazy dog.")
+          $synth.Dispose()
+          if (-not (Test-Path $wav)) { throw "could not generate the test speech" }
+          Write-Host "test speech: $((Get-Item $wav).Length) bytes"
+
+          $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
+          $srt = Join-Path (Get-Location) "dist\speech_test.srt"
+          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList "--transcribe","`\"$wav`\"","--model","tiny","--language","en","--out","`\"$srt`\"" -WorkingDirectory $dir -PassThru
+          if (-not $p.WaitForExit(900000)) { $p.Kill(); throw "speech recognition took longer than 15 minutes" }
+          Write-Host "exit code: $($p.ExitCode)"
+          if (Test-Path "$srt.log") { Write-Host "---- log ----"; Get-Content "$srt.log" }
+          if ($p.ExitCode -ne 0) { throw "speech recognition failed (exit code $($p.ExitCode))" }
+          $text = Get-Content $srt -Raw
+          Write-Host "---- subtitles ----"; Write-Host $text
+          if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
+
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |

@@ -1,6 +1,7 @@
 // UI tests: drive the real main window (offscreen) with synthetic mouse / keyboard events.
 #include "core/EditOps.h"
 #include "engine/Exporter.h"
+#include "ui/AiPanel.h"
 #include "ui/Dialogs.h"
 #include "ui/MainWindow.h"
 #include "ui/ParticleField.h"
@@ -28,6 +29,35 @@ static bool makeVideo(const QString& path, const QString& color, double dur, boo
     args << path;
     return QProcess::execute(Exporter::findFfmpeg().isEmpty() ? "ffmpeg" : Exporter::findFfmpeg(), args) == 0;
 }
+
+// Points HR_FFMPEG at the fake ffmpeg (it "recognises speech" instantly) and fakes an installed speech model
+// (a sparse file of the right size) so the AI panel can be driven without downloads.
+struct FakeSpeechEnv {
+    QTemporaryDir aiDir;
+    bool had;
+    QByteArray old;
+    FakeSpeechEnv() {
+        had = qEnvironmentVariableIsSet("HR_FFMPEG");
+        old = qgetenv("HR_FFMPEG");
+#ifdef Q_OS_WIN
+        const QString fake = QCoreApplication::applicationDirPath() + "/fake_ffmpeg.exe";
+#else
+        const QString fake = QCoreApplication::applicationDirPath() + "/fake_ffmpeg";
+#endif
+        qputenv("HR_FFMPEG", fake.toUtf8());
+        qputenv("HR_AI_DIR", aiDir.path().toUtf8());
+        QFile m(aiDir.filePath("ggml-small.bin"));
+        m.open(QIODevice::WriteOnly);
+        m.resize(450ll << 20);
+        QFile v(aiDir.filePath("ggml-silero-v5.1.2.bin"));
+        v.open(QIODevice::WriteOnly);
+        v.write(QByteArray(500 * 1024, 'v'));
+    }
+    ~FakeSpeechEnv() {
+        qunsetenv("HR_AI_DIR");
+        if (had) qputenv("HR_FFMPEG", old); else qunsetenv("HR_FFMPEG");
+    }
+};
 
 class UiTests : public QObject {
     Q_OBJECT
@@ -459,6 +489,122 @@ private slots:
         }
         f.resize(QSizeF(400, 225));                  // shrinking keeps the dots inside
         for (const ParticleField::Particle& p : f.particles()) QVERIFY(p.pos.x() <= 400 && p.pos.y() <= 225);
+    }
+
+
+    // ------------------------------------------------------------------ AI Assistant
+    void aiRemovesSilencesFromRealAudio() {
+        resetTimeline();
+        const QString wav = dir.filePath("pattern.wav");   // 1 s tone, 2 s silence, 1 s tone, 1.5 s silence, 1 s tone
+        QVERIFY(QProcess::execute(Exporter::findFfmpeg().isEmpty() ? "ffmpeg" : Exporter::findFfmpeg(),
+                                  {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
+                                   "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=2", "-f", "lavfi", "-i",
+                                   "sine=frequency=440:sample_rate=48000:duration=1", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1.5",
+                                   "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1", "-filter_complex",
+                                   "[0][1][2][3][4]concat=n=5:v=0:a=1,volume=4", "-ar", "48000", wav}) == 0);
+        w->autoPlace({wav});
+        settle();
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 1);
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const double before = proj()->timeline().duration();
+        QVERIFY(std::abs(before - 6.5) < 0.1);
+        // the waveform is analysed in the background: ask until it is ready
+        QTRY_VERIFY_WITH_TIMEOUT(([&] { panel->removeSilences(); return proj()->timeline().duration() < before - 1.0; }()), 10000);
+        QVERIFY2(std::abs(proj()->timeline().duration() - 3.48) < 0.2, qPrintable(QString::number(proj()->timeline().duration())));
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 3);       // the three tones remain
+        proj()->undoStack()->undo();                                  // one undo step brings everything back
+        QVERIFY(std::abs(proj()->timeline().duration() - before) < 1e-6);
+    }
+
+    void aiEditsByTextAndAddsCaptions() {
+        load();                                                       // red.mp4 (4 s, sound) + blue.mp4 (2 s)
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const QString mediaId = proj()->timeline().audio[0].clips[0].mediaId;
+        proj()->setTranscript(mediaId, {{0.5, 1.5, "first sentence"}, {2.0, 3.0, "second sentence"}, {3.2, 3.9, "third sentence"}}, "en", "small");
+        QTRY_COMPARE(panel->sentenceCount(), 3);
+        // searching selects every sentence with the word, deleting cuts picture and sound together
+        panel->selectMatching("second");
+        const double before = proj()->timeline().duration();
+        panel->deleteSentences();
+        QVERIFY(std::abs(proj()->timeline().duration() - (before - 1.0)) < 0.05);
+        QCOMPARE(panel->sentenceCount(), 2);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 3);       // red.mp4 was cut in two, blue.mp4
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 2);
+        // captions for everything
+        panel->selectSentences({});
+        const int titlesBefore = [&] { int n = 0; for (const Track& t : proj()->timeline().video) for (const Clip& c : t.clips) n += c.kind == ClipKind::Title; return n; }();
+        panel->addCaptions(false);
+        int titles = 0;
+        QString firstText;
+        for (const Track& t : proj()->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.kind == ClipKind::Title) { ++titles; if (firstText.isEmpty()) firstText = c.effect("text")->text("text"); }
+        QCOMPARE(titles - titlesBefore, 2);
+        QVERIFY(firstText.contains("sentence"));
+        // keep only the first sentence: everything else is removed
+        panel->selectSentences({0});
+        panel->keepSelectedSentences();
+        QVERIFY2(proj()->timeline().duration() < 2.0, qPrintable(QString::number(proj()->timeline().duration())));
+    }
+
+    void aiTranscribesAndAutoEditsWithTheFakeRecogniser() {
+        FakeSpeechEnv env;
+        load();
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const QString mediaId = proj()->timeline().audio[0].clips[0].mediaId;
+        QVERIFY(proj()->mediaById(mediaId)->transcript.isEmpty());
+        proj()->setSelection({});                                      // nothing selected -> everything without a transcript
+        panel->transcribeSelection();
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy(), 20000);
+        QCOMPARE(proj()->mediaById(mediaId)->transcript.size(), 3);   // "[BLANK_AUDIO]" was dropped
+        QVERIFY(!proj()->mediaById(mediaId)->transcript[2].text.isEmpty());
+        QCOMPARE(panel->sentenceCount(), 3);
+        // transcripts are not repeated for media that already have one
+        // Auto Edit: no new transcription needed, silences + captions in one undo step
+        const int undoBefore = proj()->undoStack()->index();
+        panel->autoEdit(false, true);
+        QVERIFY(proj()->undoStack()->index() > undoBefore);
+        int titles = 0;
+        for (const Track& t : proj()->timeline().video) for (const Clip& c : t.clips) titles += c.kind == ClipKind::Title;
+        QVERIFY(titles >= 3);
+        proj()->undoStack()->undo();                                   // the whole Auto Edit is one step
+        int titlesAfter = 0;
+        for (const Track& t : proj()->timeline().video) for (const Clip& c : t.clips) titlesAfter += c.kind == ClipKind::Title;
+        QCOMPARE(titlesAfter, 0);
+    }
+
+    void aiAutoEditTranscribesFirstWhenNeeded() {
+        FakeSpeechEnv env;
+        load();
+        auto* panel = w->findChild<AiPanel*>();
+        const QString mediaId = proj()->timeline().audio[0].clips[0].mediaId;
+        panel->autoEdit(false, true);                                  // no transcript yet: listen first, then caption
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy() && !proj()->mediaById(mediaId)->transcript.isEmpty(), 20000);
+        QTRY_VERIFY_WITH_TIMEOUT(([&] { int n = 0; for (const Track& t : proj()->timeline().video) for (const Clip& c : t.clips) n += c.kind == ClipKind::Title; return n >= 3; }()), 5000);
+    }
+
+    void aiDetectsAndCutsScenes() {
+        resetTimeline();
+        const QString clip = dir.filePath("three_scenes_ui.mp4");
+        QVERIFY(QProcess::execute(Exporter::findFfmpeg().isEmpty() ? "ffmpeg" : Exporter::findFfmpeg(),
+                                  {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=2", "-f", "lavfi",
+                                   "-i", "color=c=blue:s=320x180:r=30:d=2", "-f", "lavfi", "-i", "color=c=green:s=320x180:r=30:d=2",
+                                   "-filter_complex", "[0][1][2]concat=n=3:v=1:a=0,format=yuv420p", "-c:v", "libx264", clip}) == 0);
+        w->autoPlace({clip});
+        settle();
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        panel->detectScenes(false);                                    // markers first
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy(), 20000);
+        QCOMPARE(proj()->timeline().markers.size(), 2);
+        QVERIFY(std::abs(proj()->timeline().markers[0].time - 2.0) < 0.1 && std::abs(proj()->timeline().markers[1].time - 4.0) < 0.1);
+        panel->detectScenes(true);                                     // then cut
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy(), 20000);
+        QTRY_COMPARE_WITH_TIMEOUT(proj()->timeline().video[0].clips.size(), 3, 5000);
     }
 
     void rendersSensibleScreenshot() {

@@ -50,6 +50,7 @@ public:
     QString importFile(const QString& path, QString* error = nullptr);
     void removeMedia(const QString& id);
     void setMediaMarks(const QString& id, double in, double out);
+    void setTranscript(const QString& id, const QVector<TranscriptSegment>& segments, const QString& language, const QString& model);
 
     // ---- selection (clip ids) -------------------------------------------------
     const QSet<QString>& selection() const { return m_selection; }

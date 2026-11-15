@@ -81,6 +81,16 @@ void Project::setMediaMarks(const QString& id, double in, double out) {
     }
 }
 
+void Project::setTranscript(const QString& id, const QVector<TranscriptSegment>& segments, const QString& language, const QString& model) {
+    if (MediaItem* m = mediaById(id)) {
+        m->transcript = segments;
+        m->transcriptLanguage = language;
+        m->transcriptModel = model;
+        setDirty(true);
+        emit mediaChanged(id);
+    }
+}
+
 void Project::setSelection(const QSet<QString>& ids) {
     if (ids == m_selection) return;
     m_selection = ids;
@@ -252,6 +262,19 @@ bool Project::save(const QString& path, QString* error) {
         o["channels"] = m.channels;
         o["markIn"] = m.markIn;
         o["markOut"] = m.markOut;
+        if (!m.transcript.isEmpty()) {
+            QJsonArray tr;
+            for (const TranscriptSegment& sg : m.transcript) {
+                QJsonObject so;
+                so["s"] = sg.start;
+                so["e"] = sg.end;
+                so["t"] = sg.text;
+                tr.append(so);
+            }
+            o["transcript"] = tr;
+            o["transcriptLanguage"] = m.transcriptLanguage;
+            o["transcriptModel"] = m.transcriptModel;
+        }
         media.append(o);
     }
     root["media"] = media;
@@ -334,6 +357,12 @@ bool Project::load(const QString& path, QString* error) {
         m.markIn = o["markIn"].toDouble(-1);
         m.markOut = o["markOut"].toDouble(-1);
         m.offline = !QFileInfo::exists(m.path);
+        for (const auto& tv : o["transcript"].toArray()) {
+            const QJsonObject so = tv.toObject();
+            m.transcript.push_back({so["s"].toDouble(), so["e"].toDouble(), so["t"].toString()});
+        }
+        m.transcriptLanguage = o["transcriptLanguage"].toString();
+        m.transcriptModel = o["transcriptModel"].toString();
         m_media.push_back(m);
     }
 

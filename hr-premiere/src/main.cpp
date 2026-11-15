@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "core/EditOps.h"
+#include "ai/TranscribeCli.h"
 #include "ui/Dialogs.h"
 
 #include <QApplication>
@@ -60,8 +61,15 @@ int main(int argc, char** argv) {
     QCommandLineOption ws("workspace", "Workspace to start in.", "name");
     QCommandLineOption playFor("play", "Start playback right away (for testing).");
     QCommandLineOption dialog("dialog", "With --screenshot: capture a dialog (export, sequence, about, shortcuts) instead of the window.", "name");
-    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog});
+    QCommandLineOption transcribe("transcribe", "Headless speech recognition of <file> (downloads the model if needed).", "file");
+    QCommandLineOption model("model", "Speech model for --transcribe: tiny, base, small (default) or turbo.", "id", "small");
+    QCommandLineOption language("language", "Spoken language for --transcribe, e.g. ar, en (default: auto).", "code", "auto");
+    QCommandLineOption outFile("out", "Where --transcribe writes the subtitles (.srt).", "file");
+    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog, transcribe, model, language, outFile});
     parser.process(app);
+
+    if (parser.isSet(transcribe))
+        return hr::ai::runTranscribeCli(parser.value(transcribe), parser.value(model), parser.value(language), parser.value(outFile));
 
     const bool screenshotMode = parser.isSet(shot);
     QSplashScreen splash(makeSplash());
