@@ -1,8 +1,17 @@
 #include "Effects.h"
 
 #include <QHash>
+#include <QtGlobal>
 
 namespace hr {
+
+#if defined(Q_OS_WIN)
+static const char* kDefaultTitleFont = "Segoe UI";
+#elif defined(Q_OS_MAC)
+static const char* kDefaultTitleFont = "Helvetica Neue";
+#else
+static const char* kDefaultTitleFont = "Sans Serif";
+#endif
 
 static ParamDef num(const char* key, const char* label, double min, double max, double def,
                     double step = 1, int decimals = 1, const char* unit = "") {
@@ -67,7 +76,7 @@ static QVector<EffectDef> build() {
     });
     add("text", "Text", "", true, true, {
         text("text", "Text", "New Title"),
-        font("font", "Font", "Sans Serif"),
+        font("font", "Font", kDefaultTitleFont),
         num("size", "Size", 8, 600, 96, 1, 0, "px"),
         color("color", "Fill", "#ffffff"),
         boolean("bold", "Bold", true),
