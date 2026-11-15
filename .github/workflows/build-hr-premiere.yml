@@ -165,6 +165,65 @@ jobs:
           Write-Host "---- subtitles ----"; Write-Host $text
           if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
 
+      - name: AI accuracy on noisy speech (experiment - never fails the build)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          # Does cleaning the sound before the speech model listens help?  Windows voice + pink noise at several
+          # signal-to-noise ratios, transcribed with no clean-up / light / strong; the score is the share of the
+          # spoken words that came back.  Synthetic speech is easier than a real voice: read the numbers as a trend.
+          $ErrorActionPreference = 'Continue'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+          $ff = "$dir\ffmpeg.exe"
+          $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
+          Add-Type -AssemblyName System.Speech
+          $ref = "The quick brown fox jumps over the lazy dog. Please call Stella and ask her to bring these things with her from the store. We need a small plastic snake and a big toy frog for the kids. Today we are going to talk about editing video on the computer."
+          $speech = Join-Path (Get-Location) "dist\noise_speech.wav"
+          $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $synth.SetOutputToWaveFile($speech); $synth.Speak($ref); $synth.Dispose()
+          function MeanDb($file) {
+            $o = & $ff -hide_banner -nostats -i $file -af volumedetect -f null - 2>&1 | Out-String
+            return [double]([regex]::Match($o, 'mean_volume:\s*(-?[\d\.]+)').Groups[1].Value)
+          }
+          $noise = Join-Path (Get-Location) "dist\noise_pink.wav"
+          & $ff -hide_banner -loglevel error -y -f lavfi -i "anoisesrc=color=pink:amplitude=1.0:sample_rate=22050:duration=60" $noise
+          $speechDb = MeanDb $speech
+          $noiseDb = MeanDb $noise
+          Write-Host ("speech mean {0} dB, noise mean {1} dB" -f $speechDb, $noiseDb)
+          $refWords = @(($ref.ToLower() -replace '[^a-z ]', ' ') -split '\s+' | Where-Object { $_ })
+          function Score($srt) {
+            $text = ((Get-Content $srt) | Where-Object { $_ -notmatch '-->' -and $_ -notmatch '^\d+$' }) -join ' '
+            $hyp = [System.Collections.ArrayList]@(($text.ToLower() -replace '[^a-z ]', ' ') -split '\s+' | Where-Object { $_ })
+            $hit = 0
+            foreach ($w in $refWords) { $i = $hyp.IndexOf($w); if ($i -ge 0) { $hit++; $hyp.RemoveAt($i) } }
+            return @($hit, $refWords.Count, $text.Trim())
+          }
+          $results = @()
+          foreach ($snr in @(100, 12, 6, 2, -2)) {
+            $input = $speech
+            if ($snr -lt 100) {
+              $gain = ($speechDb - $snr) - $noiseDb
+              $input = Join-Path (Get-Location) ("dist\noisy_{0}.wav" -f $snr)
+              & $ff -hide_banner -loglevel error -y -i $speech -i $noise -filter_complex ("[1:a]volume={0}dB[n];[0:a][n]amix=inputs=2:duration=first:normalize=0" -f $gain.ToString([cultureinfo]::InvariantCulture)) $input
+            }
+            foreach ($mode in @('none', 'light', 'strong', 'auto')) {
+              $srt = Join-Path (Get-Location) ("dist\n_{0}_{1}.srt" -f $snr, $mode)
+              $argLine = "--transcribe `"$input`" --model tiny --language en --clean $mode --out `"$srt`""
+              $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList $argLine -WorkingDirectory $dir -PassThru
+              if (-not $p.WaitForExit(300000)) { $p.Kill() }
+              if (Test-Path $srt) {
+                $r = Score $srt
+                $line = "SNR {0,4} dB  clean-up {1,-6}  words {2,2}/{3}  ({4:P0})  {5}" -f $snr, $mode, $r[0], $r[1], ($r[0] / $r[1]), $r[2].Substring(0, [Math]::Min(70, $r[2].Length))
+              } else { $line = "SNR {0,4} dB  clean-up {1,-6}  no result (exit {2})" -f $snr, $mode, $p.ExitCode }
+              Write-Host $line
+              $results += $line
+              if ($mode -eq 'auto' -and (Test-Path "$srt.log")) { (Get-Content "$srt.log" | Select-String 'clean-up') | ForEach-Object { Write-Host "      $_" } }
+            }
+          }
+          "## AI accuracy on noisy speech`n" + ($results -join "`n") | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
       # The installer and the downloads are produced whenever the package itself works (clean-PATH smoke test passed),
       # even if the AI test failed - that test needs the internet to fetch a model, so a network hiccup must not
       # keep the program from being built. The job still ends red in that case.

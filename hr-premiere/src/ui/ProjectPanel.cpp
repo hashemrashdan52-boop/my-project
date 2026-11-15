@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ProjectPanel.h"
 
 #include "Icons.h"
@@ -74,7 +75,7 @@ void MediaList::paintEvent(QPaintEvent* e) {
                  icons::pixmap(icons::Import, theme::textDim, 48));
     p.setPen(theme::textDim);
     p.drawText(viewport()->rect().adjusted(16, 30, -16, 0), Qt::AlignCenter | Qt::TextWordWrap,
-               "Import media to get started\nFile > Import…  (Ctrl+I)\nor drop files here");
+               TR("Import media to get started\nFile > Import…  (Ctrl+I)\nor drop files here"));
 }
 
 // ----------------------------------------------------------------- ProjectPanel
@@ -82,24 +83,24 @@ ProjectPanel::ProjectPanel(Project* project, MediaAssets* assets, QWidget* paren
     : QWidget(parent), m_project(project), m_assets(assets) {
     m_list = new MediaList(this);
     m_search = new QLineEdit(this);
-    m_search->setPlaceholderText("Search");
+    m_search->setPlaceholderText(TR("Search"));
     m_search->setClearButtonEnabled(true);
 
     m_iconBtn = new QToolButton(this);
     m_iconBtn->setIcon(icons::make(icons::IconView));
     m_iconBtn->setCheckable(true);
     m_iconBtn->setChecked(true);
-    m_iconBtn->setToolTip("Icon view");
+    m_iconBtn->setToolTip(TR("Icon view"));
     m_listBtn = new QToolButton(this);
     m_listBtn->setIcon(icons::make(icons::ListView));
     m_listBtn->setCheckable(true);
-    m_listBtn->setToolTip("List view");
+    m_listBtn->setToolTip(TR("List view"));
     auto* importBtn = new QToolButton(this);
     importBtn->setIcon(icons::make(icons::Import));
-    importBtn->setToolTip("Import media (Ctrl+I)");
+    importBtn->setToolTip(TR("Import media (Ctrl+I)"));
     auto* delBtn = new QToolButton(this);
     delBtn->setIcon(icons::make(icons::Trash));
-    delBtn->setToolTip("Remove from project");
+    delBtn->setToolTip(TR("Remove from project"));
     m_size = new QSlider(Qt::Horizontal, this);
     m_size->setRange(60, 200);
     m_size->setValue(112);
@@ -179,7 +180,7 @@ QIcon ProjectPanel::makeIcon(const MediaItem& m) const {
     if (m.offline) {
         p.fillRect(r, QColor("#4a1c24"));
         p.setPen(Qt::white);
-        p.drawText(r, Qt::AlignCenter, "Media Offline");
+        p.drawText(r, Qt::AlignCenter, TR("Media Offline"));
     } else if (!a.poster.isNull()) {
         const QSizeF s = a.poster.size();
         const double sc = std::min(w / s.width(), h / s.height());
@@ -231,7 +232,7 @@ void ProjectPanel::updateItem(QListWidgetItem* it, const MediaItem& m) {
     } else {
         QString info = m.kind == MediaKind::Audio ? QString("%1 Hz").arg(m.sampleRate)
                        : m.kind == MediaKind::Image ? QString("%1 × %2").arg(m.width).arg(m.height)
-                                                    : QString("%1 × %2  ·  %3 fps").arg(m.width).arg(m.height).arg(m.fps, 0, 'f', m.fps == std::floor(m.fps) ? 0 : 2);
+                                                    : QString(TR("%1 × %2  ·  %3 fps")).arg(m.width).arg(m.height).arg(m.fps, 0, 'f', m.fps == std::floor(m.fps) ? 0 : 2);
         it->setText(QString("%1\n%2  ·  %3").arg(m.name, formatDuration(m.duration), info));
     }
     it->setToolTip(m.path);
@@ -274,7 +275,7 @@ void ProjectPanel::applyFilter() {
         it->setHidden(!show);
         if (show) ++visible;
     }
-    m_count->setText(QString("%1 item%2").arg(visible).arg(visible == 1 ? "" : "s"));
+    m_count->setText(QString(TR("%1 item%2")).arg(visible).arg(visible == 1 ? "" : "s"));
 }
 
 void ProjectPanel::setIconMode(bool icons) {
@@ -307,17 +308,17 @@ void ProjectPanel::contextMenu(const QPoint& pos) {
     QMenu menu(this);
     const QStringList ids = selectedIds();
     if (ids.isEmpty()) {
-        menu.addAction("Import…", this, &ProjectPanel::importRequested);
+        menu.addAction(TR("Import…"), this, &ProjectPanel::importRequested);
     } else {
-        menu.addAction("Open in Source Monitor", this, [this, ids] { emit openInSource(ids.first()); });
-        menu.addAction("Insert at Playhead", this, [this, ids] { emit insertRequested(ids); });
-        menu.addAction("Overwrite at Playhead", this, [this, ids] { emit overwriteRequested(ids); });
+        menu.addAction(TR("Open in Source Monitor"), this, [this, ids] { emit openInSource(ids.first()); });
+        menu.addAction(TR("Insert at Playhead"), this, [this, ids] { emit insertRequested(ids); });
+        menu.addAction(TR("Overwrite at Playhead"), this, [this, ids] { emit overwriteRequested(ids); });
         menu.addSeparator();
-        menu.addAction("Reveal in Folder", this, [this, ids] {
+        menu.addAction(TR("Reveal in Folder"), this, [this, ids] {
             if (const MediaItem* m = m_project->mediaById(ids.first()))
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m->path).absolutePath()));
         });
-        menu.addAction("Remove from Project", this, [this, ids] { emit removeRequested(ids); });
+        menu.addAction(TR("Remove from Project"), this, [this, ids] { emit removeRequested(ids); });
     }
     menu.exec(m_list->viewport()->mapToGlobal(pos));
 }

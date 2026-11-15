@@ -26,7 +26,13 @@ int main(int argc, char** argv) {
             std::puts(" T.. whisper          A->A       Run Automatic Speech Recognition using OpenAI's Whisper.");
             return 0;
         }
-    if (af.rfind("whisper=", 0) != 0) return 3;
+    const size_t w = af.find("whisper=");
+    if (w == std::string::npos) return 3;
+    if (const char* log = std::getenv("FAKE_FFMPEG_LOG")) {       // tests read back what the filter chain was
+        std::ofstream l(log, std::ios::binary | std::ios::trunc);
+        l << af;
+    }
+    af = af.substr(w);                                            // options of the whisper filter itself
     if (!std::ifstream(option(af, "model"))) {
         std::fprintf(stderr, "[whisper] could not load model\n");
         return 1;

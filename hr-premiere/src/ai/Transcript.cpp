@@ -1,6 +1,7 @@
 #include "Transcript.h"
 
 #include "core/EditOps.h"
+#include "core/TextUtil.h"
 #include "core/Util.h"
 
 #include <QRegularExpression>
@@ -90,10 +91,13 @@ QVector<TimelineSegment> transcriptOnTimeline(const Timeline& tl, const QVector<
             const MediaItem* m = byId.value(c.mediaId, nullptr);
             if (!m || m->transcript.isEmpty()) continue;
             const double in = c.srcIn, outT = c.srcIn + c.duration * c.speed;
-            for (const TranscriptSegment& s : m->transcript) {
+            for (int si = 0; si < m->transcript.size(); ++si) {
+                const TranscriptSegment& s = m->transcript[si];
                 const double a = std::max(s.start, in), b = std::min(s.end, outT);
                 if (b - a < 0.05) continue;
                 TimelineSegment ts;
+                ts.index = si;
+                ts.edited = s.edited;
                 ts.start = c.start + (a - in) / c.speed;
                 ts.end = c.start + (b - in) / c.speed;
                 ts.text = s.text;
@@ -135,22 +139,24 @@ QVector<TimelineSegment> splitForCaptions(const QVector<TimelineSegment>& segmen
     return out;
 }
 
-QVector<Clip> makeCaptionClips(const QVector<TimelineSegment>& segments) {
+QVector<Clip> makeCaptionClips(const QVector<TimelineSegment>& segments, const CaptionStyle& style) {
     QVector<Clip> out;
     for (const TimelineSegment& s : segments) {
         Clip c = ops::makeTitle(s.start, std::max(0.3, s.end - s.start), s.text);
+        c.role = "caption";
         EffectInstance* tx = c.effect("text");
-        tx->set("size", 54.0);
-        tx->set("bold", true);
-        tx->set("shadow", true);
-        c.effect("motion")->set("position_y", 36.0);     // lower third of the picture
+        tx->set("size", style.size);
+        tx->set("bold", style.bold);
+        tx->set("shadow", style.shadow);
+        tx->set("color", style.color);
+        c.effect("motion")->set("position_y", style.positionY);
         out.push_back(c);
     }
     return out;
 }
 
-int addCaptions(Timeline& tl, const QVector<TimelineSegment>& segments) {
-    const QVector<Clip> clips = makeCaptionClips(segments);
+int addCaptions(Timeline& tl, const QVector<TimelineSegment>& segments, const CaptionStyle& style) {
+    const QVector<Clip> clips = makeCaptionClips(segments, style);
     if (clips.isEmpty()) return -1;
     const double a = clips.first().start, b = clips.last().end();
     // the top-most track with nothing in the caption range
@@ -167,6 +173,192 @@ int addCaptions(Timeline& tl, const QVector<TimelineSegment>& segments) {
     }
     for (const Clip& c : clips) ops::place(tl.video[track], c);
     return track;
+}
+
+int removeCaptions(Timeline& tl) {
+    int n = 0;
+    for (Track& tr : tl.video) {
+        if (tr.locked) continue;
+        for (int i = int(tr.clips.size()) - 1; i >= 0; --i)
+            if (tr.clips[i].role == "caption") { tr.clips.removeAt(i); ++n; }
+    }
+    return n;
+}
+
+int restyleCaptions(Timeline& tl, const QString& color, double size, double positionY) {
+    int n = 0;
+    for (Track& tr : tl.video)
+        for (Clip& c : tr.clips) {
+            if (c.role != "caption") continue;
+            if (EffectInstance* tx = c.effect("text")) {
+                if (!color.isEmpty()) tx->set("color", color);
+                if (size > 0) tx->set("size", size);
+            }
+            if (!std::isnan(positionY))
+                if (EffectInstance* mo = c.effect("motion")) mo->set("position_y", positionY);
+            ++n;
+        }
+    return n;
+}
+
+int retextCaptions(Timeline& tl, double start, double end, const QString& text, int maxChars) {
+    // the caption pieces whose middle lies inside the sentence
+    int track = -1;
+    Clip proto;
+    QVector<QString> ids;
+    for (int ti = 0; ti < tl.video.size(); ++ti)
+        for (const Clip& c : tl.video[ti].clips) {
+            const double mid = (c.start + c.end()) / 2.0;
+            if (c.role != "caption" || mid < start - 1e-6 || mid > end + 1e-6) continue;
+            if (track < 0) { track = ti; proto = c; }
+            if (ti == track) ids.push_back(c.id);
+        }
+    if (ids.isEmpty()) return 0;
+    double a = 1e18, b = 0;
+    for (const Clip& c : tl.video[track].clips)
+        if (ids.contains(c.id)) { a = std::min(a, c.start); b = std::max(b, c.end()); }
+    Track& tr = tl.video[track];
+    for (int i = int(tr.clips.size()) - 1; i >= 0; --i)
+        if (ids.contains(tr.clips[i].id)) tr.clips.removeAt(i);
+    TimelineSegment whole;
+    whole.start = a;
+    whole.end = b;
+    whole.text = text;
+    int made = 0;
+    for (const TimelineSegment& part : splitForCaptions({whole}, maxChars)) {
+        Clip c = proto;                      // same font, colour, size and position as before
+        c.id = newId();
+        c.start = part.start;
+        c.duration = std::max(0.3, part.end - part.start);
+        c.name = part.text.left(24);
+        if (EffectInstance* tx = c.effect("text")) tx->set("text", part.text);
+        ops::place(tr, c);
+        ++made;
+    }
+    return made;
+}
+
+int replaceInCaptions(Timeline& tl, const QString& from, const QString& to) {
+    if (from.trimmed().isEmpty()) return 0;
+    const QRegularExpression re = tolerantRegex(from);
+    QString safeTo = to;
+    safeTo.replace('\\', QStringLiteral("\\\\"));
+    int n = 0;
+    for (Track& tr : tl.video)
+        for (Clip& c : tr.clips) {
+            if (c.role != "caption") continue;
+            EffectInstance* tx = c.effect("text");
+            if (!tx) continue;
+            QString t = tx->text("text");
+            int hits = 0;
+            auto it = re.globalMatch(t);
+            while (it.hasNext()) { it.next(); ++hits; }
+            if (!hits) continue;
+            t.replace(re, safeTo);
+            tx->set("text", t);
+            c.name = t.left(24);
+            n += hits;
+        }
+    return n;
+}
+
+// ---- reliability ------------------------------------------------------------------------------------------
+static double byteToDb(double v) { return 20.0 * std::log10(std::max(1.0, v) / 255.0); }
+
+// phrases that speech models are known to invent on noise or silence (compared after normalizeArabic)
+static bool looksInvented(const QString& normalized) {
+    static const QStringList phrases = {
+        "thanks for watching", "thank you for watching", "thank you very much for watching", "please subscribe",
+        "like and subscribe", "subtitles by", "subtitles made by", "amara org", "transcribed by", "translated by",
+        QString::fromUtf8("شكرا للمشاهده"), QString::fromUtf8("شكرا لمشاهدتكم"), QString::fromUtf8("شكرا لكم على المشاهده"),
+        QString::fromUtf8("اشتركوا في القناه"), QString::fromUtf8("اشترك في القناه"), QString::fromUtf8("لا تنسوا الاشتراك"),
+        QString::fromUtf8("ترجمه نانسي قنقر"), QString::fromUtf8("ترجمه المجتمع"), QString::fromUtf8("الي اللقاء في الحلقه القادمه"),
+    };
+    static const QStringList labels = {"music", QString::fromUtf8("موسيقي"), "applause", QString::fromUtf8("تصفيق"), "you", "bye", "."};
+    const QString t = normalized.simplified();
+    for (const QString& l : labels)
+        if (t == l) return true;
+    for (const QString& p : phrases)
+        if (t.contains(p)) return true;
+    return false;
+}
+
+QVector<SegmentQuality> assessTranscript(const QVector<TranscriptSegment>& segments, const QVector<quint8>* peaks100) {
+    QVector<SegmentQuality> out(segments.size());
+    const bool haveSound = peaks100 && peaks100->size() > 200;
+    double noiseDb = -60;
+    if (haveSound) {
+        std::vector<quint8> v(peaks100->begin(), peaks100->end());
+        std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(v.size() * 15 / 100), v.end());
+        noiseDb = byteToDb(v[v.size() * 15 / 100]);
+    }
+    QString previous;
+    for (int i = 0; i < segments.size(); ++i) {
+        const TranscriptSegment& sg = segments[i];
+        SegmentQuality q;
+        const QString norm = normalizeArabic(sg.text).simplified();
+        const double dur = std::max(0.01, sg.end - sg.start);
+        if (haveSound) {
+            std::vector<quint8> v;
+            const int a = std::max(0, int(sg.start * 100)), b = std::min(int(peaks100->size()), int(std::ceil(sg.end * 100)));
+            for (int k = a; k < b; ++k) v.push_back((*peaks100)[k]);
+            if (!v.empty()) {
+                const size_t k = size_t(double(v.size() - 1) * 0.85 + 0.5);
+                std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(k), v.end());
+                q.levelDb = byteToDb(v[k]);
+                q.snrDb = q.levelDb - noiseDb;
+            }
+        }
+        auto raise = [&](Quality to, const QString& why) {
+            if (to > q.quality) q.quality = to;
+            if (!q.reasons.contains(why)) q.reasons << why;
+        };
+        if (!sg.edited) {
+            if (haveSound && q.levelDb != 0) {
+                if (q.snrDb < 8) raise(Quality::Poor, "noisy");
+                else if (q.snrDb < 15) raise(Quality::Doubtful, "noisy");
+                if (q.levelDb < -34) raise(Quality::Doubtful, "quiet");
+            }
+            if (looksInvented(norm) && (!haveSound || q.snrDb < 18 || q.levelDb < -30)) raise(Quality::Poor, "hallucination");
+            // the same word over and over
+            const QStringList words = norm.split(' ', Qt::SkipEmptyParts);
+            int run = 1, longest = 1;
+            for (int w = 1; w < words.size(); ++w) {
+                run = words[w] == words[w - 1] ? run + 1 : 1;
+                longest = std::max(longest, run);
+            }
+            if (longest >= 4) raise(Quality::Poor, "repeated");
+            else if (norm.size() >= 4 && norm == previous) raise(Quality::Doubtful, "repeated");
+            // impossible speaking speed
+            QString letters = norm;
+            letters.remove(' ');
+            const double cps = double(letters.size()) / dur;
+            if (cps > 24) raise(Quality::Doubtful, "too-fast");
+            if (dur >= 2.5 && cps < 1.0) raise(Quality::Doubtful, "too-slow");
+            if (letters.size() <= 2 && haveSound && q.levelDb > -120 && q.levelDb < -25) raise(Quality::Doubtful, "tiny");
+        }
+        previous = norm;
+        out[i] = q;
+    }
+    return out;
+}
+
+QVector<TranscriptSegment> sanitizeTranscript(const QVector<TranscriptSegment>& segments, const QVector<quint8>* peaks100, int* removed) {
+    const QVector<SegmentQuality> q = assessTranscript(segments, peaks100);
+    QVector<TranscriptSegment> out;
+    int dropped = 0;
+    QString previous;
+    int repeats = 0;
+    for (int i = 0; i < segments.size(); ++i) {
+        const QString norm = normalizeArabic(segments[i].text).simplified();
+        repeats = (norm.size() >= 2 && norm == previous) ? repeats + 1 : 0;
+        previous = norm;
+        const bool invented = q[i].reasons.contains("hallucination") && !segments[i].edited;
+        if (invented || repeats >= 2 || norm.isEmpty()) { ++dropped; continue; }   // 3rd identical sentence in a row = a loop
+        out.push_back(segments[i]);
+    }
+    if (removed) *removed = dropped;
+    return out;
 }
 
 QVector<TimeRange> mergeRanges(QVector<TimeRange> ranges, double gap) {

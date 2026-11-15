@@ -1,6 +1,7 @@
 // Test-suite for the HR Premiere engine: editing operations, project files, FFmpeg
 // decoding, compositing, audio mixing and the exporter.  The media tests generate their
 // own clips with the ffmpeg command line tool so no binary fixtures are needed.
+#include "ai/Cleanup.h"
 #include "ai/Scenes.h"
 #include "ai/Silence.h"
 #include "ai/Transcript.h"
@@ -813,6 +814,30 @@ private slots:
         QCOMPARE(segs[2].text, QString::fromUtf8("مرحبا بكم في القناة"));
         QVERIFY(!prog.isEmpty());                                       // out_time_us lines became progress
         QVERIFY(!QFileInfo::exists(env.aiDir.filePath("transcript_m1.srt")));   // temp file cleaned up
+    }
+
+    void transcriberPutsTheAudioCleanUpInFrontOfTheModel() {
+        FakeFfmpegEnv env;
+        const QString log = env.aiDir.filePath("filters.txt");
+        qputenv("FAKE_FFMPEG_LOG", log.toUtf8());
+        auto run = [&](const QString& pre) {
+            ai::Transcriber tr;
+            QSignalSpy done(&tr, &ai::Transcriber::finished);
+            ai::Transcriber::Request r = FakeFfmpegEnv::request(red);
+            r.preFilter = pre;
+            tr.start(r);
+            if (!done.wait(15000) || !done.at(0).at(0).toBool()) return QString("FAILED");
+            QFile f(log);
+            f.open(QIODevice::ReadOnly);
+            return QString::fromUtf8(f.readAll());
+        };
+        const QString plain = run(QString());
+        QVERIFY2(plain.startsWith("whisper=model="), qPrintable(plain));
+        const QString light = run(ai::cleanupFilter(ai::Cleanup::Light));
+        QVERIFY2(light.startsWith("highpass=f=70,dynaudnorm=") && light.contains(",whisper=model="), qPrintable(light));
+        const QString strong = run(ai::cleanupFilter(ai::Cleanup::Strong));
+        QVERIFY2(strong.contains("afftdn=") && strong.contains(",whisper=model=") && strong.contains("vad_model="), qPrintable(strong));
+        qunsetenv("FAKE_FFMPEG_LOG");
     }
 
     void transcriberRetriesWithoutVadAndReportsFailures() {

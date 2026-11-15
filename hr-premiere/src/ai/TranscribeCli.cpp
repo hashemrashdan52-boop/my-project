@@ -1,7 +1,9 @@
 #include "TranscribeCli.h"
 
+#include "Cleanup.h"
 #include "Transcript.h"
 #include "Whisper.h"
+#include "media/MediaAssets.h"
 #include "media/MediaProbe.h"
 
 #include <QEventLoop>
@@ -10,7 +12,8 @@
 
 namespace hr::ai {
 
-int runTranscribeCli(const QString& mediaPath, const QString& modelId, const QString& language, const QString& outPath) {
+int runTranscribeCli(const QString& mediaPath, const QString& modelId, const QString& language, const QString& outPath,
+                     const QString& clean, const QString& rawPrefilter) {
     QTextStream out(stdout);
     QFile logFile(outPath.isEmpty() ? QString() : outPath + ".log");   // the Windows exe has no console: keep a log
     if (!outPath.isEmpty()) logFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
@@ -64,6 +67,20 @@ int runTranscribeCli(const QString& mediaPath, const QString& modelId, const QSt
     req.duration = item.duration;
     req.language = language.isEmpty() ? "auto" : language;
     req.model = model;
+    if (!rawPrefilter.trimmed().isEmpty()) {
+        req.preFilter = rawPrefilter.trimmed();
+        say("audio filter: " + req.preFilter);
+    } else {
+        Cleanup level = cleanupFromName(clean, Cleanup::Light);
+        if (clean.trimmed().toLower() == "auto" || clean.trimmed().isEmpty()) {
+            const AudioStats st = measureAudio(computePeaks100(mediaPath, item.duration));
+            level = chooseCleanup(st);
+            say(QString("sound: speech %1 dB, noise %2 dB -> clean-up \"%3\"").arg(st.speechDb, 0, 'f', 1).arg(st.noiseFloorDb, 0, 'f', 1).arg(cleanupName(level)));
+        } else {
+            say("clean-up: " + cleanupName(level));
+        }
+        req.preFilter = cleanupFilter(level);
+    }
     QEventLoop loop;
     bool ok = false;
     QVector<TranscriptSegment> segs;

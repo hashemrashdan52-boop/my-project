@@ -35,6 +35,9 @@ add_library(hrcore STATIC
     src/core/EditOps.cpp
     src/core/Project.cpp
     src/core/Util.cpp
+    src/core/TextUtil.cpp
+    src/core/I18n.cpp
+    src/core/I18nArabic.cpp
     src/media/FFmpegUtil.cpp
     src/media/MediaProbe.cpp
     src/media/VideoDecoder.cpp
@@ -50,6 +53,7 @@ add_library(hrcore STATIC
     src/engine/Exporter.cpp
     src/engine/VoiceRecorder.cpp
     src/ai/Silence.cpp
+    src/ai/Cleanup.cpp
     src/ai/Scenes.cpp
     src/ai/Transcript.cpp
     src/ai/Whisper.cpp
@@ -97,6 +101,13 @@ add_executable(fake_ffmpeg tests/fake_ffmpeg.cpp)   # stand-in for ffmpeg in the
 add_dependencies(hr_tests fake_ffmpeg)
 add_test(NAME hr_tests COMMAND hr_tests)
 set_tests_properties(hr_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# the AI assistant's logic: Arabic text, transcript quality, smart edit planner, chat parser
+add_executable(hr_ai_tests tests/test_ai.cpp)
+target_link_libraries(hr_ai_tests PRIVATE hrcore Qt6::Test)
+add_dependencies(hr_ai_tests fake_ffmpeg)
+add_test(NAME hr_ai_tests COMMAND hr_ai_tests)
+set_tests_properties(hr_ai_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 if(HR_BUILD_APP)
     add_executable(hr_ui_tests tests/test_ui.cpp)

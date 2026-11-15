@@ -6,11 +6,13 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QColor>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -106,6 +108,35 @@ private:
 class ShortcutsDialog : public QDialog {
 public:
     explicit ShortcutsDialog(QWidget* parent = nullptr);
+};
+
+// First start: "Arabic or English?" (shown in both languages). Returns "ar" or "en" through code().
+class LanguageDialog : public QDialog {
+public:
+    explicit LanguageDialog(QWidget* parent = nullptr);
+    QString code() const { return m_code; }
+
+private:
+    QString m_code = "en";
+};
+
+// Edit > Preferences: language and colour theme.  Themes are previewed live; Cancel puts the old one back.
+class PreferencesDialog : public QDialog {
+public:
+    explicit PreferencesDialog(QWidget* parent = nullptr);
+    void accept() override;
+    void reject() override;
+    bool languageChanged() const;
+    QString chosenLanguageCode() const;
+
+private:
+    void pickTheme(const QString& id);
+    void chooseAccent();
+    QComboBox* m_lang = nullptr;
+    QListWidget* m_themes = nullptr;
+    QPushButton* m_accentBtn = nullptr;
+    QString m_startTheme;
+    QColor m_startAccent;
 };
 
 }  // namespace hr

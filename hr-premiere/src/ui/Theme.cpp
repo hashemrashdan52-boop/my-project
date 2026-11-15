@@ -2,7 +2,10 @@
 
 #include <QApplication>
 #include <QPalette>
+#include <QSettings>
+#include <QStyle>
 #include <QStyleFactory>
+#include <QWidget>
 
 namespace hr::theme {
 
@@ -82,9 +85,103 @@ QStatusBar::item { border: none; }
 QScrollArea { border: none; background: %1; }
 QFrame#card { background: %2; border: 1px solid %9; border-radius: 4px; }
 QLabel#dim { color: %8; }
+QLabel#accentText { color: %11; }
+QLabel#cardTitle { color: %11; font-weight: 700; font-size: 13px; background: transparent; }
+#tlHeader { background: %2; }
+QLabel#timecode { color: %11; font-size: 18px; font-weight: 600; font-family: 'DejaVu Sans Mono', Consolas, monospace; }
+QLabel#monitorTime { color: %11; font-size: 16px; font-weight: 600; font-family: 'DejaVu Sans Mono', Consolas, monospace; }
+QLabel#monitorDuration { color: %8; font-size: 14px; font-family: 'DejaVu Sans Mono', Consolas, monospace; }
+QLabel#bubbleUser { background: %12; color: white; border-radius: 10px; padding: 7px 10px; }
+QLabel#bubbleBot { background: %3; color: %7; border: 1px solid %9; border-radius: 10px; padding: 7px 10px; }
 )")
         .arg(bg1.name(), bg2.name(), bg3.name(), bg3.name(), bg4.name(), border.name(), text.name(), textDim.name())
         .arg(line.name(), accent.name(), accentHi.name(), accentDim.name());
+}
+
+// ------------------------------------------------------------------------------------------------ the themes
+static Theme make(const char* id, const char* name, bool dark, const char* b0, const char* b1, const char* b2, const char* b3,
+                  const char* b4, const char* brd, const char* ln, const char* tx, const char* txd, const char* ac,
+                  const char* achi, const char* acdim) {
+    Theme t;
+    t.id = id; t.name = name; t.dark = dark;
+    t.bg0 = b0; t.bg1 = b1; t.bg2 = b2; t.bg3 = b3; t.bg4 = b4; t.border = brd; t.line = ln;
+    t.text = tx; t.textDim = txd; t.accent = ac; t.accentHi = achi; t.accentDim = acdim;
+    return t;
+}
+
+const QVector<Theme>& all() {
+    static const QVector<Theme> themes = {
+        //   id          name                 dark  bg0       bg1       bg2       bg3       bg4       border    line      text      textDim   accent    accentHi  accentDim
+        make("hr",       "HR Purple",         true, "#161616", "#1f1f1f", "#262626", "#2f2f2f", "#3a3a3a", "#101010", "#3b3b3b", "#d6d6d6", "#8d8d8d", "#9184d9", "#b4a9f2", "#5b5294"),
+        make("classic",  "Classic",           true, "#141414", "#232323", "#2b2b2b", "#343434", "#414141", "#0d0d0d", "#3f3f3f", "#d9d9d9", "#939393", "#2d8ceb", "#6bb0f5", "#245f9c"),
+        make("midnight", "Midnight Blue",     true, "#0b1020", "#111a30", "#17223d", "#1f2c4d", "#2a3a63", "#070b16", "#2c3b63", "#dfe7ff", "#8e9bc0", "#4f8cff", "#8ab4ff", "#2f5bb5"),
+        make("ocean",    "Ocean",             true, "#0a1719", "#102226", "#162d32", "#1d3a40", "#274b52", "#06100f", "#28474d", "#d9f3f6", "#82a9ae", "#22c3d6", "#6fe0ee", "#16808d"),
+        make("emerald",  "Emerald",           true, "#0d1714", "#13211c", "#1a2c25", "#223a31", "#2c4a3f", "#08100d", "#2f4d42", "#dcf2e8", "#86a999", "#2ec27e", "#6fe3ad", "#1d7d52"),
+        make("sunset",   "Sunset",            true, "#1a1210", "#241917", "#2e211e", "#3a2a26", "#4a352f", "#120c0b", "#4a3731", "#f3e3dc", "#b79a8e", "#ff7a45", "#ffa179", "#b2522b"),
+        make("rose",     "Rose",              true, "#1b1117", "#261820", "#311f29", "#3e2833", "#4f3340", "#120b10", "#52374a", "#f6e3ec", "#b898a8", "#ff5c9a", "#ff8fba", "#b23d6c"),
+        make("light",    "Light",             false, "#cfd3db", "#eceef2", "#e0e4ea", "#d4d9e2", "#c5ccd9", "#aeb5c4", "#bcc3d0", "#1c2030", "#667085", "#6b5bd6", "#4a3fb5", "#7a6ee0"),
+    };
+    return themes;
+}
+
+const Theme* find(const QString& id) {
+    for (const Theme& t : all())
+        if (t.id == id) return &t;
+    return nullptr;
+}
+
+static QString g_id = kDefaultId;
+static QColor g_accentOverride;
+
+QString currentId() { return g_id; }
+QColor accentOverride() { return g_accentOverride; }
+
+void use(const QString& id, const QColor& accentOverrideColor) {
+    const Theme* t = find(id);
+    if (!t) t = find(kDefaultId);
+    g_id = t->id;
+    g_accentOverride = accentOverrideColor.isValid() ? accentOverrideColor : QColor();
+    dark = t->dark;
+    bg0 = t->bg0; bg1 = t->bg1; bg2 = t->bg2; bg3 = t->bg3; bg4 = t->bg4;
+    border = t->border; line = t->line; text = t->text; textDim = t->textDim;
+    accent = t->accent; accentHi = t->accentHi; accentDim = t->accentDim;
+    if (g_accentOverride.isValid()) {
+        accent = g_accentOverride;
+        accentHi = dark ? g_accentOverride.lighter(145) : g_accentOverride.darker(125);
+        accentDim = dark ? g_accentOverride.darker(165) : g_accentOverride.lighter(115);
+    }
+}
+
+void loadSaved() {
+    QSettings s;
+    const QString acc = s.value("ui/accent").toString();
+    use(s.value("ui/theme", kDefaultId).toString(), acc.isEmpty() ? QColor() : QColor(acc));
+}
+
+void save() {
+    QSettings s;
+    s.setValue("ui/theme", g_id);
+    if (g_accentOverride.isValid()) s.setValue("ui/accent", g_accentOverride.name());
+    else s.remove("ui/accent");
+}
+
+Notifier* notifier() {
+    static Notifier n;
+    return &n;
+}
+
+void refresh(QApplication& app) {
+    apply(app);
+    emit notifier()->changed();
+    for (QWidget* w : app.allWidgets()) {
+        w->style()->unpolish(w);
+        w->style()->polish(w);
+        w->update();
+    }
+}
+
+void refresh() {
+    if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) refresh(*app);
 }
 
 void apply(QApplication& app) {
@@ -99,7 +196,7 @@ void apply(QApplication& app) {
     p.setColor(QPalette::Text, text);
     p.setColor(QPalette::Button, bg3);
     p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::BrightText, Qt::white);
+    p.setColor(QPalette::BrightText, dark ? QColor(Qt::white) : QColor(Qt::black));
     p.setColor(QPalette::Highlight, accent);
     p.setColor(QPalette::HighlightedText, Qt::white);
     p.setColor(QPalette::PlaceholderText, textDim);

@@ -19,6 +19,7 @@ QString newId();
 struct TranscriptSegment {
     double start = 0, end = 0;
     QString text;
+    bool edited = false;     // the user corrected this sentence by hand (so it is not flagged as doubtful any more)
 };
 
 // One imported file in the Project panel.
@@ -54,6 +55,7 @@ struct Clip {
     double sourceLength = 0; // total source length, 0 = unbounded (stills, titles)
     double speed = 1.0;      // source seconds played per timeline second (2 = twice as fast, 0.5 = slow motion)
     bool enabled = true;
+    QString role;            // who made it: "caption" (AI captions), "motion" (AI zoom), empty = the user
     QVector<EffectInstance> effects;
 
     double end() const { return start + duration; }

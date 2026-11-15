@@ -182,6 +182,7 @@ void Transcriber::launch(bool withVad) {
     QString filter = QString("whisper=model=%1:language=%2:queue=20:use_gpu=false:destination=%3:format=srt")
                          .arg(m_req.model.file, m_req.language.isEmpty() ? "auto" : m_req.language, m_outName);
     if (withVad) filter += QString(":vad_model=%1").arg(AiModels::vadModel().file);
+    if (!m_req.preFilter.trimmed().isEmpty()) filter = m_req.preFilter.trimmed() + "," + filter;
     const QStringList args = {"-hide_banner", "-nostdin", "-y", "-i", m_req.mediaPath, "-vn", "-map", "0:a:0", "-af", filter,
                               "-progress", "pipe:1", "-nostats", "-f", "null", "-"};
     if (m_proc) m_proc->deleteLater();

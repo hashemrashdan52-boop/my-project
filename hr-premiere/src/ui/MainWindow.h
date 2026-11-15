@@ -91,6 +91,8 @@ private:
     void setFade(bool fadeIn);
     void toggleClipEnabled();
     void changeSpeed();
+    void preferences();
+    void restartApplication();
     void removeEffectsFromSelection();
     void sequenceSettings();
     void addTrack(TrackType t);
@@ -146,6 +148,7 @@ private:
 
     QVector<ClipCopy> m_clipboard;
     bool m_restoreLayout;
+    bool m_restarting = false;
     QString m_workspace = "Editing";
 };
 

@@ -4,6 +4,7 @@
 
 #include <QFont>
 #include <QFontMetricsF>
+#include <algorithm>
 #include <cmath>
 
 namespace hr {
@@ -19,6 +20,25 @@ static const Clip* clipAt(const Track& tr, double t) {
     for (const Clip& c : tr.clips)
         if (t >= c.start - 1e-6 && t < c.end() - 1e-6) return &c;
     return nullptr;
+}
+
+// Where the picture of a clip sits at `local` seconds into it: the fixed Motion values plus the movement that
+// builds up over the length of the clip (slow zoom / drift).
+struct MotionPose {
+    double scale = 1.0;
+    double dx = 0, dy = 0;   // output pixels from the centre
+    double rotation = 0;
+};
+
+static MotionPose motionPose(const EffectInstance* mo, double local, double duration, QSize out) {
+    MotionPose m;
+    if (!mo) return m;
+    const double p = duration > 1e-9 ? std::clamp(local / duration, 0.0, 1.0) : 0.0;
+    m.scale = std::max(0.0, mo->num("scale") / 100.0 * (1.0 + mo->num("zoom_amount") / 100.0 * p));
+    m.dx = (mo->num("position_x") + mo->num("pan_x") * p) / 100.0 * out.width();
+    m.dy = (mo->num("position_y") + mo->num("pan_y") * p) / 100.0 * out.height();
+    m.rotation = mo->num("rotation");
+    return m;
 }
 
 QImage Renderer::render(const Timeline& tl, double t, QSize out) {
@@ -72,15 +92,13 @@ void Renderer::drawTitle(QPainter& p, const Clip& c, double local, QSize out) {
     QRectF bounds = fm.boundingRect(QRectF(0, 0, out.width() * 0.9, 100000), flags, text);
     bounds.moveCenter(QPointF(0, 0));
 
-    const double px = mo ? mo->num("position_x") / 100.0 * out.width() : 0;
-    const double py = mo ? mo->num("position_y") / 100.0 * out.height() : 0;
+    const MotionPose pose = motionPose(mo, local, c.duration, out);
     p.save();
     p.setOpacity(opac);
-    p.translate(out.width() / 2.0 + px, out.height() / 2.0 + py);
+    p.translate(out.width() / 2.0 + pose.dx, out.height() / 2.0 + pose.dy);
     if (mo) {
-        p.rotate(mo->num("rotation"));
-        const double s = mo->num("scale") / 100.0;
-        p.scale(s, s);
+        p.rotate(pose.rotation);
+        p.scale(pose.scale, pose.scale);
     }
     p.setFont(f);
     if (tx->flag("shadow")) {
@@ -104,11 +122,12 @@ void Renderer::drawClip(QPainter& p, const Clip& c, int trackIndex, double t, QS
     const double opac = (op ? op->num("opacity") : 100.0) / 100.0 *
                         fadeFactor(local, c.duration, op ? op->num("fade_in") : 0, op ? op->num("fade_out") : 0);
     if (opac <= 0) return;
-    const double userScale = mo ? mo->num("scale") / 100.0 : 1.0;
+    const MotionPose pose = motionPose(mo, local, c.duration, out);
+    const double userScale = mo ? pose.scale : 1.0;
     if (userScale <= 0) return;
-    const double userRot = mo ? mo->num("rotation") : 0.0;
-    const double px = mo ? mo->num("position_x") / 100.0 * out.width() : 0;
-    const double py = mo ? mo->num("position_y") / 100.0 * out.height() : 0;
+    const double userRot = pose.rotation;
+    const double px = pose.dx;
+    const double py = pose.dy;
 
     // geometry of the source -------------------------------------------------
     QImage img;

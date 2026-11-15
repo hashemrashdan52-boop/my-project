@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "TextUtil.h"
 
 #include "media/MediaProbe.h"
 
@@ -89,6 +90,64 @@ void Project::setTranscript(const QString& id, const QVector<TranscriptSegment>&
         setDirty(true);
         emit mediaChanged(id);
     }
+}
+
+void Project::setTranscriptSegments(const QString& id, const QVector<TranscriptSegment>& segments) {
+    if (MediaItem* m = mediaById(id)) {
+        m->transcript = segments;
+        setDirty(true);
+        emit mediaChanged(id);
+    }
+}
+
+TranscriptCommand::TranscriptCommand(Project* p, const QString& mediaId, QVector<TranscriptSegment> before,
+                                     QVector<TranscriptSegment> after, const QString& text)
+    : m_project(p), m_media(mediaId), m_before(std::move(before)), m_after(std::move(after)) {
+    setText(text);
+}
+void TranscriptCommand::undo() { m_project->setTranscriptSegments(m_media, m_before); }
+void TranscriptCommand::redo() { m_project->setTranscriptSegments(m_media, m_after); }
+
+bool Project::editSentence(const QString& mediaId, int index, const QString& text) {
+    const MediaItem* m = mediaById(mediaId);
+    if (!m || index < 0 || index >= m->transcript.size()) return false;
+    const QString clean = text.simplified();
+    if (clean.isEmpty() || clean == m->transcript[index].text) return false;
+    QVector<TranscriptSegment> after = m->transcript;
+    after[index].text = clean;
+    after[index].edited = true;
+    m_undo.push(new TranscriptCommand(this, mediaId, m->transcript, after, QStringLiteral("Edit sentence")));
+    return true;
+}
+
+int Project::replaceInTranscripts(const QString& from, const QString& to) {
+    if (from.trimmed().isEmpty()) return 0;
+    const QRegularExpression re = tolerantRegex(from);
+    QString safeTo = to;
+    safeTo.replace('\\', QStringLiteral("\\\\"));   // no back-references in the replacement text
+    struct Change { QString id; QVector<TranscriptSegment> before, after; };
+    QVector<Change> changes;
+    int total = 0;
+    for (const MediaItem& m : m_media) {
+        Change ch{m.id, m.transcript, m.transcript};
+        bool any = false;
+        for (TranscriptSegment& sg : ch.after) {
+            int hits = 0;
+            auto it = re.globalMatch(sg.text);
+            while (it.hasNext()) { it.next(); ++hits; }
+            if (!hits) continue;
+            sg.text.replace(re, safeTo);
+            sg.edited = true;
+            total += hits;
+            any = true;
+        }
+        if (any) changes.push_back(ch);
+    }
+    if (changes.isEmpty()) return 0;
+    m_undo.beginMacro(QStringLiteral("Replace word"));
+    for (const Change& ch : changes) m_undo.push(new TranscriptCommand(this, ch.id, ch.before, ch.after, QStringLiteral("Replace word")));
+    m_undo.endMacro();
+    return total;
 }
 
 void Project::setSelection(const QSet<QString>& ids) {
@@ -197,6 +256,7 @@ static QJsonObject clipToJson(const Clip& c) {
     o["sourceLength"] = c.sourceLength;
     o["speed"] = c.speed;
     o["enabled"] = c.enabled;
+    if (!c.role.isEmpty()) o["role"] = c.role;
     QJsonArray fx;
     for (const auto& e : c.effects) fx.append(effectToJson(e));
     o["effects"] = fx;
@@ -218,6 +278,7 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.speed = o["speed"].toDouble(1.0);
     if (c.speed <= 0) c.speed = 1.0;
     c.enabled = o["enabled"].toBool(true);
+    c.role = o["role"].toString();
     for (const auto& v : o["effects"].toArray()) c.effects.push_back(effectFromJson(v.toObject()));
     return c;
 }
@@ -272,6 +333,7 @@ bool Project::save(const QString& path, QString* error) {
                 so["s"] = sg.start;
                 so["e"] = sg.end;
                 so["t"] = sg.text;
+                if (sg.edited) so["x"] = true;
                 tr.append(so);
             }
             o["transcript"] = tr;
@@ -362,7 +424,7 @@ bool Project::load(const QString& path, QString* error) {
         m.offline = !QFileInfo::exists(m.path);
         for (const auto& tv : o["transcript"].toArray()) {
             const QJsonObject so = tv.toObject();
-            m.transcript.push_back({so["s"].toDouble(), so["e"].toDouble(), so["t"].toString()});
+            m.transcript.push_back({so["s"].toDouble(), so["e"].toDouble(), so["t"].toString(), so["x"].toBool(false)});
         }
         m.transcriptLanguage = o["transcriptLanguage"].toString();
         m.transcriptModel = o["transcriptModel"].toString();

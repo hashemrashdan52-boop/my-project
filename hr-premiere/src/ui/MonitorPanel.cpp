@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "MonitorPanel.h"
 
 #include "Icons.h"
@@ -120,16 +121,14 @@ MonitorPanel::MonitorPanel(Player* player, Kind kind, QWidget* parent)
     m_view = new VideoView(this);
     m_scrub = new MiniScrubber(this);
     m_tc = new QLabel("00:00:00:00", this);
-    m_tc->setStyleSheet(QString("color:%1; font-size:16px; font-weight:600; font-family: 'DejaVu Sans Mono', Consolas, monospace;")
-                            .arg(theme::accentHi.name()));
+    m_tc->setObjectName("monitorTime");
     m_dur = new QLabel("00:00:00:00", this);
-    m_dur->setStyleSheet(QString("color:%1; font-size:14px; font-family: 'DejaVu Sans Mono', Consolas, monospace;")
-                             .arg(theme::textDim.name()));
+    m_dur->setObjectName("monitorDuration");
     m_quality = new QComboBox(this);
-    m_quality->addItem("Full", 1.0);
+    m_quality->addItem(TR("Full"), 1.0);
     m_quality->addItem("1/2", 0.5);
     m_quality->addItem("1/4", 0.25);
-    m_quality->setToolTip("Playback resolution");
+    m_quality->setToolTip(TR("Playback resolution"));
     m_quality->setFixedWidth(70);
     m_quality->setCurrentIndex(0);
 
@@ -141,14 +140,14 @@ MonitorPanel::MonitorPanel(Player* player, Kind kind, QWidget* parent)
     top->addStretch();
     top->addWidget(m_dur);
 
-    auto* markIn = button(icons::MarkIn, "Mark In (I)");
-    auto* markOut = button(icons::MarkOut, "Mark Out (O)");
-    auto* toStart = button(icons::ToStart, m_kind == Program ? "Go to Previous Edit (Up)" : "Go to Start (Home)");
-    auto* stepBack = button(icons::StepBack, "Step Back 1 Frame (Left)");
-    m_play = button(icons::Play, "Play / Stop (Space)");
+    auto* markIn = button(icons::MarkIn, TR("Mark In (I)"));
+    auto* markOut = button(icons::MarkOut, TR("Mark Out (O)"));
+    auto* toStart = button(icons::ToStart, m_kind == Program ? TR("Go to Previous Edit (Up)") : TR("Go to Start (Home)"));
+    auto* stepBack = button(icons::StepBack, TR("Step Back 1 Frame (Left)"));
+    m_play = button(icons::Play, TR("Play / Stop (Space)"));
     m_play->setIconSize(QSize(26, 26));
-    auto* stepFwd = button(icons::StepForward, "Step Forward 1 Frame (Right)");
-    auto* toEnd = button(icons::ToEnd, m_kind == Program ? "Go to Next Edit (Down)" : "Go to End (End)");
+    auto* stepFwd = button(icons::StepForward, TR("Step Forward 1 Frame (Right)"));
+    auto* toEnd = button(icons::ToEnd, m_kind == Program ? TR("Go to Next Edit (Down)") : TR("Go to End (End)"));
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(6, 0, 6, 6);
@@ -163,14 +162,14 @@ MonitorPanel::MonitorPanel(Player* player, Kind kind, QWidget* parent)
     bar->addWidget(toEnd);
     bar->addSpacing(14);
     if (m_kind == Source) {
-        auto* ins = button(icons::Insert, "Insert (,)");
-        auto* ovr = button(icons::Overwrite, "Overwrite (.)");
+        auto* ins = button(icons::Insert, TR("Insert (,)"));
+        auto* ovr = button(icons::Overwrite, TR("Overwrite (.)"));
         bar->addWidget(ins);
         bar->addWidget(ovr);
         connect(ins, &QToolButton::clicked, this, &MonitorPanel::insertRequested);
         connect(ovr, &QToolButton::clicked, this, &MonitorPanel::overwriteRequested);
     }
-    auto* cam = button(icons::Camera, "Export Frame (Ctrl+Shift+E)");
+    auto* cam = button(icons::Camera, TR("Export Frame (Ctrl+Shift+E)"));
     bar->addWidget(cam);
     bar->addStretch();
 

@@ -67,6 +67,7 @@ public:
         QString language = "auto";    // "auto", "ar", "en", ...
         ModelInfo model;
         bool useVad = true;           // retried without if the VAD model cannot be used
+        QString preFilter;            // ffmpeg audio filters applied before the model hears the sound (see Cleanup.h)
     };
 
     explicit Transcriber(QObject* parent = nullptr);

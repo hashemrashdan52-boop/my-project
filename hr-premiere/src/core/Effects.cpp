@@ -63,6 +63,10 @@ static QVector<EffectDef> build() {
         num("position_y", "Position Y", -200, 200, 0, 0.5, 1, "%"),
         num("scale", "Scale", 0, 800, 100, 1, 1, "%"),
         num("rotation", "Rotation", -3600, 3600, 0, 1, 1, "°"),
+        // movement over the length of the clip (0 = none): the picture slowly zooms / drifts while it plays
+        num("zoom_amount", "Zoom During Clip", -90, 300, 0, 0.5, 1, "%"),
+        num("pan_x", "Drift X During Clip", -100, 100, 0, 0.5, 1, "%"),
+        num("pan_y", "Drift Y During Clip", -100, 100, 0, 0.5, 1, "%"),
     });
     add("opacity", "Opacity", "", true, true, {
         num("opacity", "Opacity", 0, 100, 100, 1, 1, "%"),

@@ -29,6 +29,20 @@ private:
     QString m_mergeKey;
 };
 
+// Undo command for a change of one media file's transcript (a corrected sentence, a replaced word).
+class TranscriptCommand : public QUndoCommand {
+public:
+    TranscriptCommand(Project* p, const QString& mediaId, QVector<TranscriptSegment> before, QVector<TranscriptSegment> after,
+                      const QString& text);
+    void undo() override;
+    void redo() override;
+
+private:
+    Project* m_project;
+    QString m_media;
+    QVector<TranscriptSegment> m_before, m_after;
+};
+
 class Project : public QObject {
     Q_OBJECT
 public:
@@ -51,6 +65,13 @@ public:
     void removeMedia(const QString& id);
     void setMediaMarks(const QString& id, double in, double out);
     void setTranscript(const QString& id, const QVector<TranscriptSegment>& segments, const QString& language, const QString& model);
+    // Replaces only the sentences (no undo step: used by TranscriptCommand).
+    void setTranscriptSegments(const QString& id, const QVector<TranscriptSegment>& segments);
+    // Corrects one sentence by hand (undoable); the sentence is then marked as checked by the user.
+    bool editSentence(const QString& mediaId, int index, const QString& text);
+    // Replaces a word / phrase in every transcript, ignoring case, diacritics and hamza variants (one undo step).
+    // Returns how many places were changed.
+    int replaceInTranscripts(const QString& from, const QString& to);
 
     // ---- selection (clip ids) -------------------------------------------------
     const QSet<QString>& selection() const { return m_selection; }

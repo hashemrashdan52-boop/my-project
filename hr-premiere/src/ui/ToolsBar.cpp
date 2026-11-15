@@ -1,4 +1,5 @@
 #include "ToolsBar.h"
+#include "core/I18n.h"
 
 #include "Icons.h"
 #include "Theme.h"
@@ -25,11 +26,11 @@ ToolsBar::ToolsBar(QWidget* parent) : QWidget(parent) {
     m_group.setExclusive(true);
     for (const T& t : tools) {
         auto* b = new QToolButton(this);
-        b->setIcon(icons::make(t.icon, theme::text, QColor("#ffffff")));
+        b->setIcon(icons::make(t.icon));
         b->setIconSize(QSize(20, 20));
         b->setFixedSize(36, 32);
         b->setCheckable(true);
-        b->setToolTip(t.tip);
+        b->setToolTip(TR(t.tip));
         lay->addWidget(b);
         m_group.addButton(b);
         m_buttons << b;

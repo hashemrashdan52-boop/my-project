@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "MainWindow.h"
 
 #include "Dialogs.h"
@@ -18,6 +19,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QScreen>
+#include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QDir>
@@ -29,12 +31,15 @@
 
 namespace hr {
 
-static const char* kMediaFilter =
-    "Media files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts *.wmv *.flv *.3gp "
-    "*.mp3 *.wav *.aac *.m4a *.flac *.ogg *.opus *.wma *.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff);;All files (*)";
+static QString mediaFilter() {
+    return TR("Media files") +
+           " (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mts *.m2ts *.wmv *.flv *.3gp "
+           "*.mp3 *.wav *.aac *.m4a *.flac *.ogg *.opus *.wma *.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff);;" +
+           TR("All files") + " (*)";
+}
 
 MainWindow::MainWindow(bool restoreLayout) : m_restoreLayout(restoreLayout) {
-    setWindowTitle("HR Premiere");
+    setWindowTitle(TR("HR Premiere"));
     setWindowIcon(QIcon(icons::logo(64)));
     setAcceptDrops(true);
     setDockNestingEnabled(true);
@@ -57,7 +62,7 @@ MainWindow::MainWindow(bool restoreLayout) : m_restoreLayout(restoreLayout) {
         m_sourceMedia.clear();
         m_source->pause();
         m_source->setTimeline(std::make_shared<const Timeline>(Timeline::makeDefault(1, 1)));
-        m_sourceMon->setPlaceholder("Double-click a clip in the Project panel\nto load it here");
+        m_sourceMon->setPlaceholder(TR("Double-click a clip in the Project panel\nto load it here"));
         m_sourceMon->syncDuration();
         m_dockSource->setWindowTitle("Source: (no clips)");
         m_program->seek(0);
@@ -73,7 +78,7 @@ MainWindow::MainWindow(bool restoreLayout) : m_restoreLayout(restoreLayout) {
     connect(m_source, &Player::playingChanged, this, [this](bool playing) { if (playing) m_program->pause(); });
 
     onTimelineChanged();
-    m_sourceMon->setPlaceholder("Double-click a clip in the Project panel\nto load it here");
+    m_sourceMon->setPlaceholder(TR("Double-click a clip in the Project panel\nto load it here"));
     applyWorkspace("Editing");
     if (m_restoreLayout) {
         QSettings s;
@@ -84,7 +89,7 @@ MainWindow::MainWindow(bool restoreLayout) : m_restoreLayout(restoreLayout) {
     }
     updateDockTitles();
     updateTitle();
-    setStatus("Ready");
+    setStatus(TR("Ready"));
 }
 
 MainWindow::~MainWindow() = default;
@@ -140,7 +145,7 @@ void MainWindow::buildUi() {
     m_history = new QUndoView(m_project.undoStack(), this);
     m_ai = new AiPanel(&m_project, &m_assets, m_program, this);
     connect(m_ai, &AiPanel::statusMessage, this, [this](const QString& t) { setStatus(t); });
-    m_history->setEmptyLabel("Original");
+    m_history->setEmptyLabel(TR("Original"));
 
     connect(m_projectPanel, &ProjectPanel::importRequested, this, &MainWindow::importDialog);
     connect(m_projectPanel, &ProjectPanel::filesDropped, this, [this](const QStringList& p) { importFiles(p); });
@@ -163,12 +168,12 @@ void MainWindow::buildUi() {
 
     // --- docks ----------------------------------------------------------------
     m_dockSource = makeDock("Source: (no clips)", "dock_source", m_sourceMon);
-    m_dockEffectControls = makeDock("Effect Controls", "dock_effect_controls", m_effectControls);
+    m_dockEffectControls = makeDock(TR("Effect Controls"), "dock_effect_controls", m_effectControls);
     m_dockProgram = makeDock("Program: Sequence 01", "dock_program", m_programMon);
-    m_dockProject = makeDock("Project", "dock_project", m_projectPanel);
-    m_dockEffects = makeDock("Effects", "dock_effects", m_effectsBrowser);
-    m_dockHistory = makeDock("History", "dock_history", m_history);
-    m_dockAi = makeDock("AI Assistant", "dock_ai", m_ai);
+    m_dockProject = makeDock(TR("Project"), "dock_project", m_projectPanel);
+    m_dockEffects = makeDock(TR("Effects"), "dock_effects", m_effectsBrowser);
+    m_dockHistory = makeDock(TR("History"), "dock_history", m_history);
+    m_dockAi = makeDock(TR("AI Assistant"), "dock_ai", m_ai);
 
     addDockWidget(Qt::LeftDockWidgetArea, m_dockSource);
     addDockWidget(Qt::LeftDockWidgetArea, m_dockProject);
@@ -192,34 +197,34 @@ void MainWindow::buildUi() {
     m_meters = new AudioMeters(this);
 
     auto* header = new QWidget(this);
+    header->setObjectName("tlHeader");
+    header->setAttribute(Qt::WA_StyledBackground, true);
     header->setFixedHeight(36);
-    header->setStyleSheet(QString("background:%1;").arg(theme::bg2.name()));
     auto* hl = new QHBoxLayout(header);
     hl->setContentsMargins(10, 0, 10, 0);
     hl->setSpacing(6);
-    m_tlName = new QLabel("Sequence 01");
+    m_tlName = new QLabel(TR("Sequence 01"));
     m_tlName->setStyleSheet("font-weight:600;");
     m_recLabel = new QLabel;
     m_recLabel->setStyleSheet("color:#ff4d57; font-weight:700;");
     m_recLabel->hide();
     m_tlTimecode = new QLabel("00:00:00:00");
-    m_tlTimecode->setStyleSheet(QString("color:%1; font-size:18px; font-weight:600; font-family:'DejaVu Sans Mono',Consolas,monospace;")
-                                    .arg(theme::accentHi.name()));
+    m_tlTimecode->setObjectName("timecode");
     auto tbtn = [&](icons::Name n, const QString& tip, bool checkable = false) {
         auto* b = new QToolButton(header);
-        b->setIcon(icons::make(n, theme::text, QColor("#ffffff")));
+        b->setIcon(icons::make(n));
         b->setIconSize(QSize(18, 18));
         b->setToolTip(tip);
         b->setCheckable(checkable);
         return b;
     };
-    m_snapBtn = tbtn(icons::Magnet, "Snap (S)", true);
+    m_snapBtn = tbtn(icons::Magnet, TR("Snap (S)"), true);
     m_snapBtn->setChecked(true);
-    m_linkBtn = tbtn(icons::Link, "Linked Selection (Ctrl+L toggles link of selected clips)", true);
+    m_linkBtn = tbtn(icons::Link, TR("Linked Selection (Ctrl+L toggles link of selected clips)"), true);
     m_linkBtn->setChecked(true);
-    auto* markerBtn = tbtn(icons::Marker, "Add Marker (M)");
-    auto* zoomOut = tbtn(icons::Zoom, "Zoom out (-)");
-    auto* fitBtn = tbtn(icons::Film, "Zoom to fit (\\)");
+    auto* markerBtn = tbtn(icons::Marker, TR("Add Marker (M)"));
+    auto* zoomOut = tbtn(icons::Zoom, TR("Zoom out (-)"));
+    auto* fitBtn = tbtn(icons::Film, TR("Zoom to fit (\\)"));
     hl->addWidget(m_tlName);
     hl->addSpacing(16);
     hl->addWidget(m_tlTimecode);
@@ -277,7 +282,7 @@ void MainWindow::buildUi() {
     m_voCountdown->setInterval(1000);
     connect(m_voCountdown, &QTimer::timeout, this, [this] {
         if (--m_voCount > 0) {
-            m_recLabel->setText(QString("Recording in %1…").arg(m_voCount));
+            m_recLabel->setText(QString(TR("Recording in %1…")).arg(m_voCount));
         } else {
             m_voCountdown->stop();
             beginVoiceOver();
@@ -288,7 +293,7 @@ void MainWindow::buildUi() {
         setStatus(msg);
         finishVoiceOver(false);
     });
-    connect(m_timeline, &TimelineWidget::statusMessage, this, [this](const QString& s) { setStatus(s.isEmpty() ? "Ready" : s); });
+    connect(m_timeline, &TimelineWidget::statusMessage, this, [this](const QString& s) { setStatus(s.isEmpty() ? TR("Ready") : s); });
     connect(m_timeline, &TimelineWidget::contextMenuRequested, this, &MainWindow::showClipMenu);
 
     m_status = new QLabel;
@@ -316,142 +321,144 @@ void MainWindow::buildMenus() {
     setMenuWidget(wrap);
 
     // ---- File
-    QMenu* file = mb->addMenu("&File");
-    addAction(file, "New Project", QKeySequence("Ctrl+Alt+N"), [this] { newProject(); });
-    addAction(file, "Open Project…", QKeySequence::Open, [this] { openProject(); });
+    QMenu* file = mb->addMenu(TR("&File"));
+    addAction(file, TR("New Project"), QKeySequence("Ctrl+Alt+N"), [this] { newProject(); });
+    addAction(file, TR("Open Project…"), QKeySequence::Open, [this] { openProject(); });
     file->addSeparator();
-    addAction(file, "Save", QKeySequence::Save, [this] { saveProject(); });
-    addAction(file, "Save As…", QKeySequence("Ctrl+Shift+S"), [this] { saveProjectAs(); });
+    addAction(file, TR("Save"), QKeySequence::Save, [this] { saveProject(); });
+    addAction(file, TR("Save As…"), QKeySequence("Ctrl+Shift+S"), [this] { saveProjectAs(); });
     file->addSeparator();
-    addAction(file, "Import…", QKeySequence("Ctrl+I"), [this] { importDialog(); });
-    addAction(file, "Export Media…", QKeySequence("Ctrl+M"), [this] { exportMedia(); });
-    addAction(file, "Export Frame…", QKeySequence("Ctrl+Shift+E"), [this] { exportFrame(); });
+    addAction(file, TR("Import…"), QKeySequence("Ctrl+I"), [this] { importDialog(); });
+    addAction(file, TR("Export Media…"), QKeySequence("Ctrl+M"), [this] { exportMedia(); });
+    addAction(file, TR("Export Frame…"), QKeySequence("Ctrl+Shift+E"), [this] { exportFrame(); });
     file->addSeparator();
-    addAction(file, "Exit", QKeySequence::Quit, [this] { close(); });
+    addAction(file, TR("Exit"), QKeySequence::Quit, [this] { close(); });
 
     // ---- Edit
-    QMenu* edit = mb->addMenu("&Edit");
-    QAction* undo = m_project.undoStack()->createUndoAction(this, "Undo");
+    QMenu* edit = mb->addMenu(TR("&Edit"));
+    QAction* undo = m_project.undoStack()->createUndoAction(this, TR("Undo"));
     undo->setShortcuts({QKeySequence("Ctrl+Z")});
-    QAction* redo = m_project.undoStack()->createRedoAction(this, "Redo");
+    QAction* redo = m_project.undoStack()->createRedoAction(this, TR("Redo"));
     redo->setShortcuts({QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")});
     edit->addAction(undo);
     edit->addAction(redo);
     edit->addSeparator();
-    addAction(edit, "Cut", QKeySequence("Ctrl+X"), [this] { copySelection(true); });
-    addAction(edit, "Copy", QKeySequence("Ctrl+C"), [this] { copySelection(false); });
-    addAction(edit, "Paste", QKeySequence("Ctrl+V"), [this] { paste(); });
+    addAction(edit, TR("Cut"), QKeySequence("Ctrl+X"), [this] { copySelection(true); });
+    addAction(edit, TR("Copy"), QKeySequence("Ctrl+C"), [this] { copySelection(false); });
+    addAction(edit, TR("Paste"), QKeySequence("Ctrl+V"), [this] { paste(); });
     edit->addSeparator();
-    QAction* del = addAction(edit, "Delete", QKeySequence(Qt::Key_Delete), [this] { deleteSelection(false); });
+    QAction* del = addAction(edit, TR("Delete"), QKeySequence(Qt::Key_Delete), [this] { deleteSelection(false); });
     del->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
-    QAction* rdel = addAction(edit, "Ripple Delete", QKeySequence("Shift+Delete"), [this] { deleteSelection(true); });
+    QAction* rdel = addAction(edit, TR("Ripple Delete"), QKeySequence("Shift+Delete"), [this] { deleteSelection(true); });
     rdel->setShortcuts({QKeySequence("Shift+Delete"), QKeySequence("Shift+Backspace")});
     edit->addSeparator();
-    addAction(edit, "Select All", QKeySequence("Ctrl+A"), [this] { selectAll(); });
-    addAction(edit, "Deselect All", QKeySequence("Ctrl+Shift+A"), [this] { m_project.setSelection({}); });
+    addAction(edit, TR("Select All"), QKeySequence("Ctrl+A"), [this] { selectAll(); });
+    addAction(edit, TR("Deselect All"), QKeySequence("Ctrl+Shift+A"), [this] { m_project.setSelection({}); });
+    edit->addSeparator();
+    addAction(edit, TR("Preferences…"), QKeySequence("Ctrl+,"), [this] { preferences(); });
 
     // ---- Clip
-    QMenu* clip = mb->addMenu("&Clip");
-    addAction(clip, "Add Edit at Playhead", QKeySequence("Ctrl+K"), [this] { splitAtPlayhead(false); });
-    addAction(clip, "Add Edit to All Tracks", QKeySequence("Ctrl+Shift+K"), [this] { splitAtPlayhead(true); });
+    QMenu* clip = mb->addMenu(TR("&Clip"));
+    addAction(clip, TR("Add Edit at Playhead"), QKeySequence("Ctrl+K"), [this] { splitAtPlayhead(false); });
+    addAction(clip, TR("Add Edit to All Tracks"), QKeySequence("Ctrl+Shift+K"), [this] { splitAtPlayhead(true); });
     clip->addSeparator();
-    addAction(clip, "Link / Unlink", QKeySequence("Ctrl+L"), [this] { toggleLink(); });
-    addAction(clip, "Enable / Disable Clip", QKeySequence("Shift+E"), [this] { toggleClipEnabled(); });
-    addAction(clip, "Speed / Duration…", QKeySequence("Ctrl+R"), [this] { changeSpeed(); });
+    addAction(clip, TR("Link / Unlink"), QKeySequence("Ctrl+L"), [this] { toggleLink(); });
+    addAction(clip, TR("Enable / Disable Clip"), QKeySequence("Shift+E"), [this] { toggleClipEnabled(); });
+    addAction(clip, TR("Speed / Duration…"), QKeySequence("Ctrl+R"), [this] { changeSpeed(); });
     clip->addSeparator();
-    addAction(clip, "Fade In (1 s)", QKeySequence(), [this] { setFade(true); });
-    addAction(clip, "Fade Out (1 s)", QKeySequence(), [this] { setFade(false); });
-    addAction(clip, "Remove All Effects", QKeySequence(), [this] { removeEffectsFromSelection(); });
+    addAction(clip, TR("Fade In (1 s)"), QKeySequence(), [this] { setFade(true); });
+    addAction(clip, TR("Fade Out (1 s)"), QKeySequence(), [this] { setFade(false); });
+    addAction(clip, TR("Remove All Effects"), QKeySequence(), [this] { removeEffectsFromSelection(); });
 
     // ---- Graphics
-    QMenu* gfx = mb->addMenu("&Graphics");
-    addAction(gfx, "New Title at Playhead", QKeySequence("Ctrl+T"), [this] { addTitle(m_program->position(), m_timeline->targetVideoTrack()); });
+    QMenu* gfx = mb->addMenu(TR("&Graphics"));
+    addAction(gfx, TR("New Title at Playhead"), QKeySequence("Ctrl+T"), [this] { addTitle(m_program->position(), m_timeline->targetVideoTrack()); });
 
     // ---- Sequence
-    QMenu* seq = mb->addMenu("&Sequence");
-    addAction(seq, "Sequence Settings…", QKeySequence(), [this] { sequenceSettings(); });
+    QMenu* seq = mb->addMenu(TR("&Sequence"));
+    addAction(seq, TR("Sequence Settings…"), QKeySequence(), [this] { sequenceSettings(); });
     seq->addSeparator();
-    addAction(seq, "Record Voice-over (microphone)", QKeySequence("Ctrl+Shift+R"), [this] { toggleVoiceOver(m_timeline->targetAudioTrack()); });
-    QAction* hear = seq->addAction("Hear Sequence Audio While Recording (use headphones)");
+    addAction(seq, TR("Record Voice-over (microphone)"), QKeySequence("Ctrl+Shift+R"), [this] { toggleVoiceOver(m_timeline->targetAudioTrack()); });
+    QAction* hear = seq->addAction(TR("Hear Sequence Audio While Recording (use headphones)"));
     hear->setCheckable(true);
     hear->setChecked(QSettings().value("voiceover/hear", false).toBool());
     connect(hear, &QAction::toggled, this, [](bool on) { QSettings().setValue("voiceover/hear", on); });
     seq->addSeparator();
-    addAction(seq, "Insert from Source", QKeySequence(Qt::Key_Comma), [this] { insertFromSource(true); });
-    addAction(seq, "Overwrite from Source", QKeySequence(Qt::Key_Period), [this] { insertFromSource(false); });
+    addAction(seq, TR("Insert from Source"), QKeySequence(Qt::Key_Comma), [this] { insertFromSource(true); });
+    addAction(seq, TR("Overwrite from Source"), QKeySequence(Qt::Key_Period), [this] { insertFromSource(false); });
     seq->addSeparator();
-    addAction(seq, "Mark In", QKeySequence(Qt::Key_I), [this] { setMark(true); });
-    addAction(seq, "Mark Out", QKeySequence(Qt::Key_O), [this] { setMark(false); });
-    addAction(seq, "Clear In and Out", QKeySequence("Ctrl+Shift+X"), [this] { clearMarks(); });
-    addAction(seq, "Add Marker", QKeySequence(Qt::Key_M), [this] { addMarker(); });
+    addAction(seq, TR("Mark In"), QKeySequence(Qt::Key_I), [this] { setMark(true); });
+    addAction(seq, TR("Mark Out"), QKeySequence(Qt::Key_O), [this] { setMark(false); });
+    addAction(seq, TR("Clear In and Out"), QKeySequence("Ctrl+Shift+X"), [this] { clearMarks(); });
+    addAction(seq, TR("Add Marker"), QKeySequence(Qt::Key_M), [this] { addMarker(); });
     seq->addSeparator();
-    addAction(seq, "Go to Previous Edit", QKeySequence(Qt::Key_Up), [this] {
+    addAction(seq, TR("Go to Previous Edit"), QKeySequence(Qt::Key_Up), [this] {
         activePlayer()->seek(m_sourceActive ? 0.0 : ops::prevEdit(m_program->timeline(), m_program->position()));
     });
-    addAction(seq, "Go to Next Edit", QKeySequence(Qt::Key_Down), [this] {
+    addAction(seq, TR("Go to Next Edit"), QKeySequence(Qt::Key_Down), [this] {
         activePlayer()->seek(m_sourceActive ? activePlayer()->duration() : ops::nextEdit(m_program->timeline(), m_program->position()));
     });
     seq->addSeparator();
-    addAction(seq, "Add Video Track", QKeySequence(), [this] { addTrack(TrackType::Video); });
-    addAction(seq, "Add Audio Track", QKeySequence(), [this] { addTrack(TrackType::Audio); });
-    addAction(seq, "Delete Last Video Track", QKeySequence(), [this] { removeLastTrack(TrackType::Video); });
-    addAction(seq, "Delete Last Audio Track", QKeySequence(), [this] { removeLastTrack(TrackType::Audio); });
+    addAction(seq, TR("Add Video Track"), QKeySequence(), [this] { addTrack(TrackType::Video); });
+    addAction(seq, TR("Add Audio Track"), QKeySequence(), [this] { addTrack(TrackType::Audio); });
+    addAction(seq, TR("Delete Last Video Track"), QKeySequence(), [this] { removeLastTrack(TrackType::Video); });
+    addAction(seq, TR("Delete Last Audio Track"), QKeySequence(), [this] { removeLastTrack(TrackType::Audio); });
     seq->addSeparator();
-    addAction(seq, "Zoom In", QKeySequence(Qt::Key_Equal), [this] { m_timeline->zoomIn(); })->setShortcuts({QKeySequence(Qt::Key_Equal), QKeySequence(Qt::Key_Plus)});
-    addAction(seq, "Zoom Out", QKeySequence(Qt::Key_Minus), [this] { m_timeline->zoomOut(); });
-    addAction(seq, "Zoom to Fit", QKeySequence(Qt::Key_Backslash), [this] { m_timeline->zoomToFit(); });
-    addAction(seq, "Toggle Snapping", QKeySequence(Qt::Key_S), [this] { m_snapBtn->toggle(); });
+    addAction(seq, TR("Zoom In"), QKeySequence(Qt::Key_Equal), [this] { m_timeline->zoomIn(); })->setShortcuts({QKeySequence(Qt::Key_Equal), QKeySequence(Qt::Key_Plus)});
+    addAction(seq, TR("Zoom Out"), QKeySequence(Qt::Key_Minus), [this] { m_timeline->zoomOut(); });
+    addAction(seq, TR("Zoom to Fit"), QKeySequence(Qt::Key_Backslash), [this] { m_timeline->zoomToFit(); });
+    addAction(seq, TR("Toggle Snapping"), QKeySequence(Qt::Key_S), [this] { m_snapBtn->toggle(); });
 
     // ---- Tools (shortcuts only; shown in the Sequence menu's sibling)
-    QMenu* tools = mb->addMenu("&Tools");
-    addAction(tools, "Selection Tool", QKeySequence(Qt::Key_V), [this] { setTool(Tool::Selection); });
-    addAction(tools, "Track Select Forward Tool", QKeySequence(Qt::Key_A), [this] { setTool(Tool::TrackForward); });
-    addAction(tools, "Ripple Edit Tool", QKeySequence(Qt::Key_B), [this] { setTool(Tool::Ripple); });
-    addAction(tools, "Razor Tool", QKeySequence(Qt::Key_C), [this] { setTool(Tool::Razor); });
-    addAction(tools, "Hand Tool", QKeySequence(Qt::Key_H), [this] { setTool(Tool::Hand); });
-    addAction(tools, "Zoom Tool", QKeySequence(Qt::Key_Z), [this] { setTool(Tool::Zoom); });
-    addAction(tools, "Type Tool", QKeySequence(Qt::Key_T), [this] { setTool(Tool::Type); });
+    QMenu* tools = mb->addMenu(TR("&Tools"));
+    addAction(tools, TR("Selection Tool"), QKeySequence(Qt::Key_V), [this] { setTool(Tool::Selection); });
+    addAction(tools, TR("Track Select Forward Tool"), QKeySequence(Qt::Key_A), [this] { setTool(Tool::TrackForward); });
+    addAction(tools, TR("Ripple Edit Tool"), QKeySequence(Qt::Key_B), [this] { setTool(Tool::Ripple); });
+    addAction(tools, TR("Razor Tool"), QKeySequence(Qt::Key_C), [this] { setTool(Tool::Razor); });
+    addAction(tools, TR("Hand Tool"), QKeySequence(Qt::Key_H), [this] { setTool(Tool::Hand); });
+    addAction(tools, TR("Zoom Tool"), QKeySequence(Qt::Key_Z), [this] { setTool(Tool::Zoom); });
+    addAction(tools, TR("Type Tool"), QKeySequence(Qt::Key_T), [this] { setTool(Tool::Type); });
 
     // ---- Playback shortcuts (in a hidden group so they show up in the Tools menu)
     tools->addSeparator();
-    addAction(tools, "Play / Stop", QKeySequence(Qt::Key_Space), [this] { togglePlay(); });
-    addAction(tools, "Step Back", QKeySequence(Qt::Key_Left), [this] { activePlayer()->stepFrames(-1); });
-    addAction(tools, "Step Forward", QKeySequence(Qt::Key_Right), [this] { activePlayer()->stepFrames(1); });
-    addAction(tools, "Step Back 5 Frames", QKeySequence("Shift+Left"), [this] { activePlayer()->stepFrames(-5); });
-    addAction(tools, "Step Forward 5 Frames", QKeySequence("Shift+Right"), [this] { activePlayer()->stepFrames(5); });
-    addAction(tools, "Go to Start", QKeySequence(Qt::Key_Home), [this] { activePlayer()->seek(0); });
-    addAction(tools, "Go to End", QKeySequence(Qt::Key_End), [this] {
+    addAction(tools, TR("Play / Stop"), QKeySequence(Qt::Key_Space), [this] { togglePlay(); });
+    addAction(tools, TR("Step Back"), QKeySequence(Qt::Key_Left), [this] { activePlayer()->stepFrames(-1); });
+    addAction(tools, TR("Step Forward"), QKeySequence(Qt::Key_Right), [this] { activePlayer()->stepFrames(1); });
+    addAction(tools, TR("Step Back 5 Frames"), QKeySequence("Shift+Left"), [this] { activePlayer()->stepFrames(-5); });
+    addAction(tools, TR("Step Forward 5 Frames"), QKeySequence("Shift+Right"), [this] { activePlayer()->stepFrames(5); });
+    addAction(tools, TR("Go to Start"), QKeySequence(Qt::Key_Home), [this] { activePlayer()->seek(0); });
+    addAction(tools, TR("Go to End"), QKeySequence(Qt::Key_End), [this] {
         activePlayer()->seek(std::max(0.0, activePlayer()->duration() - 1.0 / activePlayer()->fps()));
     });
 
     // ---- AI
     QMenu* aiMenu = mb->addMenu("A&I");
     auto showAi = [this] { m_dockAi->show(); m_dockAi->raise(); };
-    addAction(aiMenu, "Open AI Assistant", QKeySequence(), showAi);
+    addAction(aiMenu, TR("Open AI Assistant"), QKeySequence(), showAi);
     aiMenu->addSeparator();
-    addAction(aiMenu, "Auto Edit the Sequence", QKeySequence(), [this, showAi] { showAi(); m_ai->autoEdit(true, true); });
-    addAction(aiMenu, "Transcribe Selected Clips (speech to text)", QKeySequence(), [this, showAi] { showAi(); m_ai->transcribeSelection(); });
-    addAction(aiMenu, "Add Captions from the Transcript", QKeySequence(), [this, showAi] { showAi(); m_ai->addCaptions(false); });
+    addAction(aiMenu, TR("Auto Edit the Sequence"), QKeySequence(), [this, showAi] { showAi(); m_ai->autoEdit(true, true); });
+    addAction(aiMenu, TR("Transcribe Selected Clips (speech to text)"), QKeySequence(), [this, showAi] { showAi(); m_ai->transcribeSelection(); });
+    addAction(aiMenu, TR("Add Captions from the Transcript"), QKeySequence(), [this, showAi] { showAi(); m_ai->addCaptions(false); });
     aiMenu->addSeparator();
-    addAction(aiMenu, "Remove Silences", QKeySequence(), [this, showAi] { showAi(); m_ai->removeSilences(); });
-    addAction(aiMenu, "Mark Scene Changes", QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(false); });
-    addAction(aiMenu, "Cut at Scene Changes", QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(true); });
+    addAction(aiMenu, TR("Remove Silences"), QKeySequence(), [this, showAi] { showAi(); m_ai->removeSilences(); });
+    addAction(aiMenu, TR("Mark Scene Changes"), QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(false); });
+    addAction(aiMenu, TR("Cut at Scene Changes"), QKeySequence(), [this, showAi] { showAi(); m_ai->detectScenes(true); });
 
     // ---- Window
-    QMenu* win = mb->addMenu("&Window");
-    QMenu* ws = win->addMenu("Workspaces");
+    QMenu* win = mb->addMenu(TR("&Window"));
+    QMenu* ws = win->addMenu(TR("Workspaces"));
     for (const QString& n : m_workspaceBar->workspaces()) addAction(ws, n, QKeySequence(), [this, n] { applyWorkspace(n); });
     ws->addSeparator();
-    addAction(ws, "Reset to Saved Layout", QKeySequence(), [this] { applyWorkspace(m_workspace); });
+    addAction(ws, TR("Reset to Saved Layout"), QKeySequence(), [this] { applyWorkspace(m_workspace); });
     win->addSeparator();
     for (QDockWidget* d : {m_dockSource, m_dockEffectControls, m_dockProgram, m_dockProject, m_dockEffects, m_dockHistory, m_dockAi})
         win->addAction(d->toggleViewAction());
 
     // ---- Help
-    QMenu* help = mb->addMenu("&Help");
-    addAction(help, "Keyboard Shortcuts", QKeySequence("Ctrl+/"), [this] { ShortcutsDialog(this).exec(); });
-    addAction(help, "الملكية  ·  Ownership", QKeySequence(), [this] { OwnershipDialog(this).exec(); });
-    addAction(help, "About HR Premiere", QKeySequence(), [this] { AboutDialog(this).exec(); });
+    QMenu* help = mb->addMenu(TR("&Help"));
+    addAction(help, TR("Keyboard Shortcuts"), QKeySequence("Ctrl+/"), [this] { ShortcutsDialog(this).exec(); });
+    addAction(help, TR("الملكية  ·  Ownership"), QKeySequence(), [this] { OwnershipDialog(this).exec(); });
+    addAction(help, TR("About HR Premiere"), QKeySequence(), [this] { AboutDialog(this).exec(); });
 }
 
 // ============================================================================ workspaces
@@ -496,6 +503,24 @@ void MainWindow::updateDockTitles() {
     }
 }
 
+void MainWindow::preferences() {
+    PreferencesDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    updateTitle();
+    if (dlg.languageChanged() &&
+        QMessageBox::question(this, TR("Preferences"), TR("The language changes after HR Premiere restarts. Restart now?")) == QMessageBox::Yes)
+        restartApplication();
+}
+
+void MainWindow::restartApplication() {
+    if (!maybeSave()) return;
+    m_restarting = true;
+    QStringList args;
+    if (!m_project.filePath().isEmpty()) args << m_project.filePath();
+    QProcess::startDetached(QCoreApplication::applicationFilePath(), args);
+    close();
+}
+
 void MainWindow::setTool(Tool t) {
     m_timeline->setTool(t);
     m_tools->setTool(t);
@@ -510,13 +535,13 @@ void MainWindow::setStatus(const QString& text) {
 // ============================================================================ project / files
 void MainWindow::updateTitle() {
     const QString n = m_project.name();
-    setWindowTitle(QString("%1%2 – HR Premiere").arg(n, m_project.isDirty() ? " *" : ""));
+    setWindowTitle(QString(TR("%1%2 – HR Premiere")).arg(n, m_project.isDirty() ? " *" : ""));
     m_workspaceBar->setProjectName(n, m_project.isDirty());
 }
 
 bool MainWindow::maybeSave() {
     if (!m_project.isDirty()) return true;
-    const auto r = QMessageBox::question(this, "HR Premiere", QString("Save changes to \"%1\" before closing?").arg(m_project.name()),
+    const auto r = QMessageBox::question(this, TR("HR Premiere"), QString(TR("Save changes to \"%1\" before closing?")).arg(m_project.name()),
                                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
     if (r == QMessageBox::Cancel) return false;
     if (r == QMessageBox::Save) return saveProject();
@@ -530,22 +555,22 @@ void MainWindow::newProject() {
 
 void MainWindow::openProject() {
     if (!maybeSave()) return;
-    const QString path = QFileDialog::getOpenFileName(this, "Open Project", QSettings().value("project/dir").toString(),
-                                                      "HR Premiere project (*.hrproj);;All files (*)");
+    const QString path = QFileDialog::getOpenFileName(this, TR("Open Project"), QSettings().value("project/dir").toString(),
+                                                      TR("HR Premiere project (*.hrproj);;All files (*)"));
     if (!path.isEmpty()) openProjectFile(path);
 }
 
 bool MainWindow::openProjectFile(const QString& path) {
     QString err;
     if (!m_project.load(path, &err)) {
-        QMessageBox::warning(this, "Open Project", QString("Could not open the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Open Project"), QString("Could not open the project:\n%1").arg(err));
         return false;
     }
     QSettings().setValue("project/dir", QFileInfo(path).absolutePath());
     for (const MediaItem& m : m_project.media()) m_assets.request(m);
     int offline = 0;
     for (const MediaItem& m : m_project.media()) offline += m.offline ? 1 : 0;
-    if (offline) setStatus(QString("%1 media file(s) could not be found and are shown as offline").arg(offline));
+    if (offline) setStatus(QString(TR("%1 media file(s) could not be found and are shown as offline")).arg(offline));
     return true;
 }
 
@@ -553,30 +578,30 @@ bool MainWindow::saveProject() {
     if (m_project.filePath().isEmpty()) return saveProjectAs();
     QString err;
     if (!m_project.save(m_project.filePath(), &err)) {
-        QMessageBox::warning(this, "Save Project", QString("Could not save the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Save Project"), QString("Could not save the project:\n%1").arg(err));
         return false;
     }
-    setStatus("Project saved");
+    setStatus(TR("Project saved"));
     return true;
 }
 
 bool MainWindow::saveProjectAs() {
-    QString path = QFileDialog::getSaveFileName(this, "Save Project", QDir(QSettings().value("project/dir", QDir::homePath()).toString()).filePath(m_project.name() + ".hrproj"),
-                                                "HR Premiere project (*.hrproj)");
+    QString path = QFileDialog::getSaveFileName(this, TR("Save Project"), QDir(QSettings().value("project/dir", QDir::homePath()).toString()).filePath(m_project.name() + ".hrproj"),
+                                                TR("HR Premiere project (*.hrproj)"));
     if (path.isEmpty()) return false;
     if (!path.endsWith(".hrproj", Qt::CaseInsensitive)) path += ".hrproj";
     QString err;
     if (!m_project.save(path, &err)) {
-        QMessageBox::warning(this, "Save Project", QString("Could not save the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Save Project"), QString("Could not save the project:\n%1").arg(err));
         return false;
     }
     QSettings().setValue("project/dir", QFileInfo(path).absolutePath());
-    setStatus("Project saved");
+    setStatus(TR("Project saved"));
     return true;
 }
 
 void MainWindow::importDialog() {
-    const QStringList files = QFileDialog::getOpenFileNames(this, "Import Media", QSettings().value("import/dir").toString(), kMediaFilter);
+    const QStringList files = QFileDialog::getOpenFileNames(this, TR("Import Media"), QSettings().value("import/dir").toString(), mediaFilter());
     if (files.isEmpty()) return;
     QSettings().setValue("import/dir", QFileInfo(files.first()).absolutePath());
     importFiles(files);
@@ -593,8 +618,8 @@ QStringList MainWindow::importFiles(const QStringList& paths, bool quiet) {
     for (const QString& id : ids)
         if (const MediaItem* m = m_project.mediaById(id)) m_assets.request(*m);
     if (!errors.isEmpty() && !quiet)
-        QMessageBox::warning(this, "Import", QString("Some files could not be imported:\n\n%1").arg(errors.join('\n')));
-    if (!ids.isEmpty()) setStatus(QString("Imported %1 file%2").arg(ids.size()).arg(ids.size() == 1 ? "" : "s"));
+        QMessageBox::warning(this, TR("Import"), QString("Some files could not be imported:\n\n%1").arg(errors.join('\n')));
+    if (!ids.isEmpty()) setStatus(QString(TR("Imported %1 file%2")).arg(ids.size()).arg(ids.size() == 1 ? "" : "s"));
     return ids;
 }
 
@@ -612,7 +637,7 @@ void MainWindow::autoPlace(const QStringList& paths) {
 
 void MainWindow::closeEvent(QCloseEvent* e) {
     if (m_voRecording || m_voCountdown->isActive()) finishVoiceOver(true);
-    if (!maybeSave()) {
+    if (!m_restarting && !maybeSave()) {
         e->ignore();
         return;
     }
@@ -642,20 +667,20 @@ void MainWindow::dropEvent(QDropEvent* e) {
 
 void MainWindow::exportMedia() {
     if (m_program->isPlaying()) m_program->pause();
-    ExportDialog dlg(m_project.timeline(), m_project.name() == "Untitled" ? m_project.timeline().name : m_project.name(), this);
+    ExportDialog dlg(m_project.timeline(), m_project.name() == TR("Untitled") ? m_project.timeline().name : m_project.name(), this);
     dlg.exec();
 }
 
 void MainWindow::exportFrame() {
     Player* p = activePlayer();
     const Timeline& tl = p->timeline();
-    const QString path = QFileDialog::getSaveFileName(this, "Export Frame", QDir::home().filePath("frame.png"), "PNG image (*.png);;JPEG image (*.jpg)");
+    const QString path = QFileDialog::getSaveFileName(this, TR("Export Frame"), QDir::home().filePath("frame.png"), TR("PNG image (*.png);;JPEG image (*.jpg)"));
     if (path.isEmpty()) return;
     DecoderPool pool;
     Renderer r(&pool);
     const QImage img = r.render(tl, snapToFrame(p->position(), tl.fps), QSize(tl.width, tl.height));
-    if (img.save(path)) setStatus(QString("Frame saved to %1").arg(path));
-    else QMessageBox::warning(this, "Export Frame", "Could not save the image.");
+    if (img.save(path)) setStatus(QString(TR("Frame saved to %1")).arg(path));
+    else QMessageBox::warning(this, TR("Export Frame"), TR("Could not save the image."));
 }
 
 // ============================================================================ timeline / players
@@ -708,7 +733,7 @@ void MainWindow::loadSource(const QString& id) {
 void MainWindow::insertFromSource(bool insert) {
     const MediaItem* m = m_project.mediaById(m_sourceMedia);
     if (!m) {
-        setStatus("Load a clip in the Source monitor first (double-click it in the Project panel)");
+        setStatus(TR("Load a clip in the Source monitor first (double-click it in the Project panel)"));
         return;
     }
     const double in = std::max(0.0, m->markIn);
@@ -721,7 +746,7 @@ void MainWindow::addMediaToTimeline(const QStringList& ids, double time, int v, 
     if (ids.isEmpty()) return;
     const bool wasEmpty = m_project.timeline().isEmpty();
     QSet<QString> added;
-    m_project.edit(insert ? "Insert" : "Overwrite", [&](Timeline& tl) {
+    m_project.edit(insert ? TR("Insert") : TR("Overwrite"), [&](Timeline& tl) {
         double t = snapToFrame(std::max(0.0, time), tl.fps);
         bool first = true;
         for (const QString& id : ids) {
@@ -756,7 +781,7 @@ void MainWindow::deleteSelection(bool ripple) {
     // single clip on purpose (e.g. only the sound of a video), so delete exactly what is selected.
     const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
-    m_project.edit(ripple ? "Ripple delete" : "Delete", [&](Timeline& tl) { ops::remove(tl, ids, ripple); });
+    m_project.edit(ripple ? TR("Ripple delete") : TR("Delete"), [&](Timeline& tl) { ops::remove(tl, ids, ripple); });
 }
 
 void MainWindow::splitAtPlayhead(bool allTracks) {
@@ -774,10 +799,10 @@ void MainWindow::splitAtPlayhead(bool allTracks) {
     if (everything) any = ops::splitAllAt(probe, t) > 0;
     else for (const QString& id : sel) any = ops::splitAt(probe, id, t) || any;
     if (!any) {
-        setStatus("Nothing to split at the playhead");
+        setStatus(TR("Nothing to split at the playhead"));
         return;
     }
-    m_project.edit("Add edit", [&](Timeline& tl) {
+    m_project.edit(TR("Add edit"), [&](Timeline& tl) {
         if (everything) ops::splitAllAt(tl, t);
         else for (const QString& id : sel) ops::splitAt(tl, id, t);
     });
@@ -793,7 +818,7 @@ void MainWindow::copySelection(bool cut) {
         if (!r.valid()) continue;
         m_clipboard.push_back({*tl.clip(r), r.type, r.track});
     }
-    setStatus(QString("Copied %1 clip%2").arg(m_clipboard.size()).arg(m_clipboard.size() == 1 ? "" : "s"));
+    setStatus(QString(TR("Copied %1 clip%2")).arg(m_clipboard.size()).arg(m_clipboard.size() == 1 ? "" : "s"));
     if (cut) deleteSelection(false);
 }
 
@@ -804,7 +829,7 @@ void MainWindow::paste() {
     const double at = snapToFrame(m_program->position(), m_project.timeline().fps);
     QHash<QString, QString> linkMap;
     QSet<QString> added;
-    m_project.edit("Paste", [&](Timeline& tl) {
+    m_project.edit(TR("Paste"), [&](Timeline& tl) {
         for (const ClipCopy& cc : m_clipboard) {
             Clip c = cc.clip;
             c.id = newId();
@@ -836,7 +861,7 @@ void MainWindow::toggleLink() {
     if (ids.size() < 2) {
         // a single clip: unlink it from its partner
         if (ids.size() == 1) {
-            m_project.edit("Unlink", [&](Timeline& tl) {
+            m_project.edit(TR("Unlink"), [&](Timeline& tl) {
                 const QSet<QString> group = ops::linkedIds(tl, *ids.begin());
                 if (group.size() < 2) return;
                 for (const QString& id : group) if (Clip* c = tl.clip(id)) c->linkId.clear();
@@ -852,7 +877,7 @@ void MainWindow::toggleLink() {
         if (first.isEmpty()) first = c->linkId;
         else if (first != c->linkId) { allLinked = false; break; }
     }
-    m_project.edit(allLinked ? "Unlink" : "Link", [&](Timeline& tl) {
+    m_project.edit(allLinked ? TR("Unlink") : TR("Link"), [&](Timeline& tl) {
         const QString link = allLinked ? QString() : newId();
         for (const QString& id : ids) if (Clip* c = tl.clip(id)) c->linkId = link;
     });
@@ -860,30 +885,30 @@ void MainWindow::toggleLink() {
 
 void MainWindow::addMarker() {
     const double t = snapToFrame(m_program->position(), m_project.timeline().fps);
-    m_project.edit("Add marker", [&](Timeline& tl) {
+    m_project.edit(TR("Add marker"), [&](Timeline& tl) {
         Marker m;
         m.time = t;
-        m.name = QString("Marker %1").arg(tl.markers.size() + 1);
+        m.name = QString(TR("Marker %1")).arg(tl.markers.size() + 1);
         tl.markers.push_back(m);
     });
 }
 
 void MainWindow::setMark(bool in) {
     const double t = snapToFrame(m_program->position(), m_project.timeline().fps);
-    m_project.edit(in ? "Mark In" : "Mark Out", [&](Timeline& tl) {
+    m_project.edit(in ? TR("Mark In") : TR("Mark Out"), [&](Timeline& tl) {
         if (in) { tl.markIn = t; if (tl.markOut >= 0 && tl.markOut <= t) tl.markOut = -1; }
         else { tl.markOut = t; if (tl.markIn >= 0 && tl.markIn >= t) tl.markIn = -1; }
     });
 }
 
 void MainWindow::clearMarks() {
-    m_project.edit("Clear In and Out", [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
+    m_project.edit(TR("Clear In and Out"), [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
 }
 
 void MainWindow::addTitle(double time, int track) {
     const double t = snapToFrame(std::max(0.0, time), m_project.timeline().fps);
-    Clip c = ops::makeTitle(t, 5.0, "New Title");
-    m_project.edit("New title", [&](Timeline& tl) {
+    Clip c = ops::makeTitle(t, 5.0, TR("New Title"));
+    m_project.edit(TR("New title"), [&](Timeline& tl) {
         const int ti = std::max(0, std::min(track, int(tl.video.size()) - 1));
         if (!tl.video[ti].locked) ops::place(tl.video[ti], c);
     });
@@ -899,7 +924,7 @@ void MainWindow::applyEffect(const QString& clipId, const QString& type) {
     QSet<QString> ids = m_project.selection();
     if (!ids.contains(clipId)) ids = ops::linkedIds(m_project.timeline(), clipId);
     int applied = 0;
-    m_project.edit(QString("Apply %1").arg(def->name), [&](Timeline& tl) {
+    m_project.edit(QString(TR("Apply %1")).arg(def->name), [&](Timeline& tl) {
         for (const QString& id : ids) {
             Clip* c = tl.clip(id);
             if (!c) continue;
@@ -911,7 +936,7 @@ void MainWindow::applyEffect(const QString& clipId, const QString& type) {
         }
     });
     if (applied == 0) {
-        setStatus(def->video ? "That effect can only be applied to video clips" : "That effect can only be applied to audio clips");
+        setStatus(def->video ? TR("That effect can only be applied to video clips") : TR("That effect can only be applied to audio clips"));
         m_project.undoStack()->undo();
     } else {
         m_dockEffectControls->show();
@@ -922,7 +947,7 @@ void MainWindow::applyEffect(const QString& clipId, const QString& type) {
 void MainWindow::applyEffectToSelection(const QString& type) {
     const QString id = m_project.primarySelection();
     if (id.isEmpty()) {
-        setStatus("Select a clip on the timeline first, then double-click the effect");
+        setStatus(TR("Select a clip on the timeline first, then double-click the effect"));
         return;
     }
     applyEffect(id, type);
@@ -931,7 +956,7 @@ void MainWindow::applyEffectToSelection(const QString& type) {
 void MainWindow::setFade(bool fadeIn) {
     const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
-    m_project.edit(fadeIn ? "Fade in" : "Fade out", [&](Timeline& tl) {
+    m_project.edit(fadeIn ? TR("Fade in") : TR("Fade out"), [&](Timeline& tl) {
         for (const QString& id : ids) {
             Clip* c = tl.clip(id);
             if (!c) continue;
@@ -945,7 +970,7 @@ void MainWindow::setFade(bool fadeIn) {
 void MainWindow::toggleClipEnabled() {
     const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
-    m_project.edit("Enable / disable clip", [&](Timeline& tl) {
+    m_project.edit(TR("Enable / disable clip"), [&](Timeline& tl) {
         for (const QString& id : ids) if (Clip* c = tl.clip(id)) c->enabled = !c->enabled;
     });
 }
@@ -958,7 +983,7 @@ void MainWindow::changeSpeed() {
         if (c && c->kind == ClipKind::Media && c->mediaKind != MediaKind::Image && (!first || c->start < first->start)) first = c;
     }
     if (!first) {
-        setStatus("Select a video or audio clip first, then Clip > Speed / Duration (Ctrl+R)");
+        setStatus(TR("Select a video or audio clip first, then Clip > Speed / Duration (Ctrl+R)"));
         return;
     }
     // copy what is needed first: the dialog runs its own event loop, so `first` must not be used afterwards
@@ -968,14 +993,14 @@ void MainWindow::changeSpeed() {
     if (std::abs(dlg.speed() - currentSpeed) < 1e-6) return;
     const double speed = dlg.speed();
     const bool ripple = dlg.ripple();
-    m_project.edit("Speed / Duration", [&](Timeline& tl) { ops::setSpeed(tl, sel, speed, ripple); });
-    setStatus(QString("Speed set to %1 %").arg(int(std::lround(speed * 100))));
+    m_project.edit(TR("Speed / Duration"), [&](Timeline& tl) { ops::setSpeed(tl, sel, speed, ripple); });
+    setStatus(QString(TR("Speed set to %1 %")).arg(int(std::lround(speed * 100))));
 }
 
 void MainWindow::removeEffectsFromSelection() {
     const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
-    m_project.edit("Remove all effects", [&](Timeline& tl) {
+    m_project.edit(TR("Remove all effects"), [&](Timeline& tl) {
         for (const QString& id : ids)
             if (Clip* c = tl.clip(id))
                 for (int i = c->effects.size() - 1; i >= 0; --i) {
@@ -991,7 +1016,7 @@ void MainWindow::sequenceSettings() {
 }
 
 void MainWindow::addTrack(TrackType t) {
-    m_project.edit(t == TrackType::Video ? "Add video track" : "Add audio track", [&](Timeline& tl) { ops::addTrack(tl, t); });
+    m_project.edit(t == TrackType::Video ? TR("Add video track") : TR("Add audio track"), [&](Timeline& tl) { ops::addTrack(tl, t); });
 }
 
 void MainWindow::removeLastTrack(TrackType t) {
@@ -999,10 +1024,10 @@ void MainWindow::removeLastTrack(TrackType t) {
     const int idx = int(tl.tracks(t).size()) - 1;
     if (idx < 1) return;
     if (!tl.tracks(t)[idx].clips.isEmpty()) {
-        setStatus("The last track still has clips on it – remove them first");
+        setStatus(TR("The last track still has clips on it – remove them first"));
         return;
     }
-    m_project.edit("Delete track", [&](Timeline& timeline) { ops::removeTrack(timeline, t, idx); });
+    m_project.edit(TR("Delete track"), [&](Timeline& timeline) { ops::removeTrack(timeline, t, idx); });
 }
 
 // ---------------------------------------------------------------------------- voice-over
@@ -1014,7 +1039,7 @@ QString MainWindow::voiceOverPath() const {
         dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/voice-overs");
     dir.mkpath(".");
     for (int i = 1; i < 10000; ++i) {
-        const QString f = dir.filePath(QString("Voice-over %1.wav").arg(i, 2, 10, QLatin1Char('0')));
+        const QString f = dir.filePath(QString(TR("Voice-over %1.wav")).arg(i, 2, 10, QLatin1Char('0')));
         if (!QFileInfo::exists(f)) return f;
     }
     return dir.filePath("Voice-over.wav");
@@ -1026,21 +1051,21 @@ void MainWindow::toggleVoiceOver(int audioTrack) {
         return;
     }
     if (!VoiceRecorder::hasMicrophone()) {
-        QMessageBox::information(this, "Voice-over",
-                                 "No microphone was found.\n\nConnect a microphone (or headset) and make sure Windows allows "
-                                 "desktop apps to use it: Settings > Privacy & security > Microphone.");
+        QMessageBox::information(this, TR("Voice-over"),
+                                 TR("No microphone was found.\n\nConnect a microphone (or headset) and make sure Windows allows "
+                                 "desktop apps to use it: Settings > Privacy & security > Microphone."));
         return;
     }
     if (audioTrack < 0 || audioTrack >= m_project.timeline().audio.size()) return;
     if (m_project.timeline().audio[audioTrack].locked) {
-        setStatus("That audio track is locked");
+        setStatus(TR("That audio track is locked"));
         return;
     }
     m_voTrack = audioTrack;
     m_voStart = snapToFrame(m_program->position(), m_project.timeline().fps);
     if (m_program->isPlaying()) m_program->pause();
     m_voCount = 3;
-    m_recLabel->setText("Recording in 3…");
+    m_recLabel->setText(TR("Recording in 3…"));
     m_recLabel->show();
     m_timeline->setRecording(m_voTrack, m_voStart, m_voStart);
     m_voCountdown->start();
@@ -1050,14 +1075,14 @@ void MainWindow::toggleVoiceOver(int audioTrack) {
 void MainWindow::updateRecIndicator() {
     const double secs = m_recorder.seconds();
     m_timeline->setRecording(m_voTrack, m_voStart, m_voStart + secs);
-    m_recLabel->setText(QString("● REC  %1  (%2)").arg(formatTimecode(secs, m_project.timeline().fps), VoiceRecorder::deviceName()));
+    m_recLabel->setText(QString(TR("● REC  %1  (%2)")).arg(formatTimecode(secs, m_project.timeline().fps), VoiceRecorder::deviceName()));
 }
 
 void MainWindow::beginVoiceOver() {
     m_voPath = voiceOverPath();
     QString err;
     if (!m_recorder.start(m_voPath, &err)) {
-        QMessageBox::warning(this, "Voice-over", err);
+        QMessageBox::warning(this, TR("Voice-over"), err);
         finishVoiceOver(false);
         return;
     }
@@ -1082,47 +1107,47 @@ void MainWindow::finishVoiceOver(bool keep) {
     m_timeline->setRecording(-1, 0, 0);
     m_meters->setLevels(0, 0);
     if (wasCounting) {
-        setStatus("Voice-over cancelled");
+        setStatus(TR("Voice-over cancelled"));
         return;
     }
     if (!keep || secs < 0.2) {
         if (!m_voPath.isEmpty()) QFile::remove(m_voPath);
-        if (keep) setStatus("Recording too short – nothing was added");
+        if (keep) setStatus(TR("Recording too short – nothing was added"));
         m_voPath.clear();
         return;
     }
     const QStringList ids = importFiles({m_voPath}, true);
     m_voPath.clear();
     if (ids.isEmpty()) {
-        setStatus("The recording could not be imported");
+        setStatus(TR("The recording could not be imported"));
         return;
     }
     addMediaToTimeline(ids, m_voStart, m_timeline->targetVideoTrack(), m_voTrack, false);
-    setStatus(QString("Voice-over added to A%1 (%2 s)").arg(m_voTrack + 1).arg(secs, 0, 'f', 1));
+    setStatus(QString(TR("Voice-over added to A%1 (%2 s)")).arg(m_voTrack + 1).arg(secs, 0, 'f', 1));
 }
 
 void MainWindow::showClipMenu(const QPoint& pos, const QString& clipId) {
     QMenu menu(this);
     const Clip* c = m_project.timeline().clip(clipId);
     if (!c) return;
-    menu.addAction("Split at Playhead", QKeySequence("Ctrl+K"), [this] { splitAtPlayhead(false); });
+    menu.addAction(TR("Split at Playhead"), QKeySequence("Ctrl+K"), [this] { splitAtPlayhead(false); });
     menu.addSeparator();
-    menu.addAction("Delete", [this] { deleteSelection(false); });
-    menu.addAction("Ripple Delete", [this] { deleteSelection(true); });
+    menu.addAction(TR("Delete"), [this] { deleteSelection(false); });
+    menu.addAction(TR("Ripple Delete"), [this] { deleteSelection(true); });
     menu.addSeparator();
-    menu.addAction("Copy", [this] { copySelection(false); });
-    menu.addAction("Cut", [this] { copySelection(true); });
+    menu.addAction(TR("Copy"), [this] { copySelection(false); });
+    menu.addAction(TR("Cut"), [this] { copySelection(true); });
     menu.addSeparator();
     const bool linked = !c->linkId.isEmpty() && ops::linkedIds(m_project.timeline(), clipId).size() > 1;
-    menu.addAction(linked ? "Unlink" : "Link", [this] { toggleLink(); });
-    menu.addAction(c->enabled ? "Disable Clip" : "Enable Clip", [this] { toggleClipEnabled(); });
-    menu.addAction("Speed / Duration…", [this] { changeSpeed(); });
+    menu.addAction(linked ? TR("Unlink") : TR("Link"), [this] { toggleLink(); });
+    menu.addAction(c->enabled ? TR("Disable Clip") : TR("Enable Clip"), [this] { toggleClipEnabled(); });
+    menu.addAction(TR("Speed / Duration…"), [this] { changeSpeed(); });
     menu.addSeparator();
-    menu.addAction("Fade In (1 s)", [this] { setFade(true); });
-    menu.addAction("Fade Out (1 s)", [this] { setFade(false); });
-    menu.addAction("Remove All Effects", [this] { removeEffectsFromSelection(); });
+    menu.addAction(TR("Fade In (1 s)"), [this] { setFade(true); });
+    menu.addAction(TR("Fade Out (1 s)"), [this] { setFade(false); });
+    menu.addAction(TR("Remove All Effects"), [this] { removeEffectsFromSelection(); });
     menu.addSeparator();
-    menu.addAction("Show in Effect Controls", [this] { m_dockEffectControls->show(); m_dockEffectControls->raise(); });
+    menu.addAction(TR("Show in Effect Controls"), [this] { m_dockEffectControls->show(); m_dockEffectControls->raise(); });
     menu.exec(pos);
 }
 

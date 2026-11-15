@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "core/EditOps.h"
+#include "core/I18n.h"
 #include "ai/TranscribeCli.h"
 #include "ui/Dialogs.h"
 
@@ -36,7 +37,7 @@ static QPixmap makeSplash() {
     f.setBold(false);
     p.setFont(f);
     p.setPen(theme::textDim);
-    p.drawText(QRect(0, 238, W, 24), Qt::AlignCenter, "Loading…");
+    p.drawText(QRect(0, 238, W, 24), Qt::AlignCenter, TR("Loading…"));
     return pm;
 }
 
@@ -46,7 +47,6 @@ int main(int argc, char** argv) {
     app.setOrganizationName("HR");
     app.setApplicationVersion("0.1.0");
     app.setWindowIcon(QIcon(icons::logo(64)));
-    theme::apply(app);
 
     QCommandLineParser parser;
     parser.setApplicationDescription("HR Premiere – video editor");
@@ -65,13 +65,38 @@ int main(int argc, char** argv) {
     QCommandLineOption model("model", "Speech model for --transcribe: tiny, base, small (default) or turbo.", "id", "small");
     QCommandLineOption language("language", "Spoken language for --transcribe, e.g. ar, en (default: auto).", "code", "auto");
     QCommandLineOption outFile("out", "Where --transcribe writes the subtitles (.srt).", "file");
-    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog, transcribe, model, language, outFile});
+    QCommandLineOption langOpt("lang", "Interface language for this run: ar (Arabic) or en (English).", "code");
+    QCommandLineOption themeOpt("theme", "Colour theme for this run: hr, classic, midnight, ocean, emerald, sunset, rose or light.", "id");
+    QCommandLineOption cleanOpt("clean", "Audio clean-up before --transcribe: none, light, strong or auto (default).", "level", "auto");
+    QCommandLineOption prefilterOpt("prefilter", "An ffmpeg audio filter chain to run before --transcribe (for experiments).", "filter");
+    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog, transcribe, model, language, outFile, langOpt, themeOpt, cleanOpt, prefilterOpt});
     parser.process(app);
 
+    // colours: what the user chose in Preferences, or --theme for this run only
+    if (parser.isSet(themeOpt)) theme::use(parser.value(themeOpt));
+    else theme::loadSaved();
+    theme::apply(app);
+
     if (parser.isSet(transcribe))
-        return hr::ai::runTranscribeCli(parser.value(transcribe), parser.value(model), parser.value(language), parser.value(outFile));
+        return hr::ai::runTranscribeCli(parser.value(transcribe), parser.value(model), parser.value(language), parser.value(outFile),
+                                        parser.value(cleanOpt), parser.value(prefilterOpt));
 
     const bool screenshotMode = parser.isSet(shot);
+
+    // language: --lang, then HR_LANG, then what the installer / the first start / Preferences stored.
+    // The very first start asks (Arabic or English); automation modes never ask and use English.
+    QString langCode = parser.value(langOpt);
+    if (langCode.isEmpty()) langCode = qEnvironmentVariable("HR_LANG");
+    if (langCode.isEmpty()) langCode = i18n::savedLanguageCode();
+    if (langCode.isEmpty() && !screenshotMode) {
+        LanguageDialog chooser;
+        chooser.exec();
+        langCode = chooser.code();
+        i18n::saveLanguageCode(langCode);
+    }
+    i18n::setCurrent(i18n::fromCode(langCode, i18n::Lang::English));
+    if (i18n::isRtl()) app.setLayoutDirection(Qt::RightToLeft);
+
     QSplashScreen splash(makeSplash());
     if (!screenshotMode) {
         splash.show();

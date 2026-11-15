@@ -1,10 +1,13 @@
+#include "core/I18n.h"
 #include "Dialogs.h"
 
 #include "Icons.h"
 #include "Theme.h"
 #include "core/Util.h"
+#include "core/I18n.h"
 
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
@@ -13,6 +16,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QPainter>
 #include <QSettings>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -25,40 +29,40 @@ namespace hr {
 // ===================================================================== Export
 ExportDialog::ExportDialog(const Timeline& tl, const QString& suggestedName, QWidget* parent)
     : QDialog(parent), m_tl(tl) {
-    setWindowTitle("Export Media");
+    setWindowTitle(TR("Export Media"));
     setMinimumWidth(520);
     QSettings s;
     m_dir = s.value("export/dir", QDir::homePath()).toString();
 
     m_path = new QLineEdit;
-    m_browse = new QPushButton("Browse…");
+    m_browse = new QPushButton(TR("Browse…"));
     m_format = new QComboBox;
-    m_format->addItem("H.264 (MP4) – works everywhere", "h264");
-    m_format->addItem("H.265 / HEVC (MP4) – smaller files", "h265");
-    m_format->addItem("Apple ProRes 422 HQ (MOV)", "prores");
-    m_format->addItem("VP9 (WebM)", "vp9");
-    m_format->addItem("Animated GIF", "gif");
-    m_format->addItem("Audio only – MP3", "mp3");
-    m_format->addItem("Audio only – WAV", "wav");
+    m_format->addItem(TR("H.264 (MP4) – works everywhere"), "h264");
+    m_format->addItem(TR("H.265 / HEVC (MP4) – smaller files"), "h265");
+    m_format->addItem(TR("Apple ProRes 422 HQ (MOV)"), "prores");
+    m_format->addItem(TR("VP9 (WebM)"), "vp9");
+    m_format->addItem(TR("Animated GIF"), "gif");
+    m_format->addItem(TR("Audio only – MP3"), "mp3");
+    m_format->addItem(TR("Audio only – WAV"), "wav");
     m_quality = new QComboBox;
-    m_quality->addItem("High quality (larger file)", 17);
-    m_quality->addItem("Medium", 21);
-    m_quality->addItem("Low (smaller file)", 27);
+    m_quality->addItem(TR("High quality (larger file)"), 17);
+    m_quality->addItem(TR("Medium"), 21);
+    m_quality->addItem(TR("Low (smaller file)"), 27);
     m_quality->setCurrentIndex(1);
     m_res = new QComboBox;
-    m_res->addItem(QString("Match sequence (%1 × %2)").arg(tl.width).arg(tl.height), 0);
+    m_res->addItem(QString(TR("Match sequence (%1 × %2)")).arg(tl.width).arg(tl.height), 0);
     m_res->addItem("2160p  (4K)", 2160);
     m_res->addItem("1440p", 1440);
     m_res->addItem("1080p", 1080);
     m_res->addItem("720p", 720);
     m_res->addItem("480p", 480);
     m_fps = new QComboBox;
-    m_fps->addItem(QString("Match sequence (%1)").arg(tl.fps, 0, 'f', tl.fps == std::floor(tl.fps) ? 0 : 3), 0.0);
-    for (double f : {24.0, 25.0, 30.0, 50.0, 60.0}) m_fps->addItem(QString::number(f) + " fps", f);
+    m_fps->addItem(QString(TR("Match sequence (%1)")).arg(tl.fps, 0, 'f', tl.fps == std::floor(tl.fps) ? 0 : 3), 0.0);
+    for (double f : {24.0, 25.0, 30.0, 50.0, 60.0}) m_fps->addItem(QString::number(f) + TR(" fps"), f);
     m_range = new QComboBox;
-    m_range->addItem("Entire sequence", 0);
+    m_range->addItem(TR("Entire sequence"), 0);
     if (tl.markIn >= 0 || tl.markOut >= 0) {
-        m_range->addItem("Work area (In to Out)", 1);
+        m_range->addItem(TR("Work area (In to Out)"), 1);
         m_range->setCurrentIndex(1);
     }
     m_info = new QLabel;
@@ -77,17 +81,17 @@ ExportDialog::ExportDialog(const Timeline& tl, const QString& suggestedName, QWi
     form->setLabelAlignment(Qt::AlignLeft);
     form->setHorizontalSpacing(16);
     form->setVerticalSpacing(10);
-    form->addRow("Output file", pathRow);
-    form->addRow("Format", m_format);
-    form->addRow("Quality", m_quality);
-    form->addRow("Resolution", m_res);
-    form->addRow("Frame rate", m_fps);
-    form->addRow("Range", m_range);
+    form->addRow(TR("Output file"), pathRow);
+    form->addRow(TR("Format"), m_format);
+    form->addRow(TR("Quality"), m_quality);
+    form->addRow(TR("Resolution"), m_res);
+    form->addRow(TR("Frame rate"), m_fps);
+    form->addRow(TR("Range"), m_range);
 
-    m_go = new QPushButton("Export");
+    m_go = new QPushButton(TR("Export"));
     m_go->setObjectName("primary");
     m_go->setDefault(true);
-    m_cancel = new QPushButton("Close");
+    m_cancel = new QPushButton(TR("Close"));
     auto* buttons = new QHBoxLayout;
     buttons->addStretch();
     buttons->addWidget(m_cancel);
@@ -96,7 +100,7 @@ ExportDialog::ExportDialog(const Timeline& tl, const QString& suggestedName, QWi
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(20, 18, 20, 18);
     lay->setSpacing(12);
-    auto* title = new QLabel("Export Settings");
+    auto* title = new QLabel(TR("Export Settings"));
     title->setStyleSheet("font-size:16px; font-weight:700;");
     lay->addWidget(title);
     lay->addLayout(form);
@@ -137,7 +141,7 @@ void ExportDialog::formatChanged() {
 void ExportDialog::browse() {
     const QString f = m_format->currentData().toString();
     const QString ext = exportExtension(f);
-    const QString path = QFileDialog::getSaveFileName(this, "Export to", m_path->text(), QString("*.%1").arg(ext));
+    const QString path = QFileDialog::getSaveFileName(this, TR("Export to"), m_path->text(), QString("*.%1").arg(ext));
     if (!path.isEmpty()) m_path->setText(path.endsWith("." + ext, Qt::CaseInsensitive) ? path : path + "." + ext);
 }
 
@@ -146,23 +150,23 @@ void ExportDialog::setBusy(bool busy) {
                        static_cast<QWidget*>(m_res), static_cast<QWidget*>(m_fps), static_cast<QWidget*>(m_range),
                        static_cast<QWidget*>(m_browse), static_cast<QWidget*>(m_go)})
         w->setEnabled(!busy);
-    m_cancel->setText(busy ? "Cancel" : "Close");
+    m_cancel->setText(busy ? TR("Cancel") : TR("Close"));
     if (!busy) formatChanged();
 }
 
 void ExportDialog::startExport() {
     if (m_tl.duration() <= 0) {
-        QMessageBox::information(this, "Export", "The sequence is empty. Add some clips to the timeline first.");
+        QMessageBox::information(this, TR("Export"), TR("The sequence is empty. Add some clips to the timeline first."));
         return;
     }
     ExportSettings s;
     s.outputPath = m_path->text().trimmed();
     if (s.outputPath.isEmpty()) {
-        QMessageBox::warning(this, "Export", "Choose where to save the file.");
+        QMessageBox::warning(this, TR("Export"), TR("Choose where to save the file."));
         return;
     }
     if (QFileInfo::exists(s.outputPath) &&
-        QMessageBox::question(this, "Export", "This file already exists. Replace it?") != QMessageBox::Yes)
+        QMessageBox::question(this, TR("Export"), TR("This file already exists. Replace it?")) != QMessageBox::Yes)
         return;
     s.format = m_format->currentData().toString();
     s.crf = m_quality->currentData().toInt();
@@ -184,18 +188,18 @@ void ExportDialog::startExport() {
         if (m_tl.markOut >= 0) s.end = m_tl.markOut;
     }
     if (s.end <= s.start) {
-        QMessageBox::warning(this, "Export", "The In point must be before the Out point.");
+        QMessageBox::warning(this, TR("Export"), TR("The In point must be before the Out point."));
         return;
     }
     if (Exporter::findFfmpeg().isEmpty()) {
-        QMessageBox::critical(this, "Export",
-                              "ffmpeg was not found.\n\nPut ffmpeg (ffmpeg.exe on Windows) in the same folder as "
-                              "HRPremiere, or install it and add it to your PATH.");
+        QMessageBox::critical(this, TR("Export"),
+                              TR("ffmpeg was not found.\n\nPut ffmpeg (ffmpeg.exe on Windows) in the same folder as "
+                              "HRPremiere, or install it and add it to your PATH."));
         return;
     }
     QSettings().setValue("export/dir", QFileInfo(s.outputPath).absolutePath());
     m_bar->setValue(0);
-    m_status->setText("Starting…");
+    m_status->setText(TR("Starting…"));
     setBusy(true);
     m_exporter = new Exporter(m_tl, s, this);
     connect(m_exporter, &Exporter::progress, this, [this](double f, const QString& msg) {
@@ -210,8 +214,8 @@ void ExportDialog::startExport() {
         if (ok) {
             m_bar->setValue(1000);
             m_status->setText(QString("<span style='color:#7bd88f'>✔ Export complete:</span> %1").arg(out.toHtmlEscaped()));
-            m_go->setText("Export again");
-            if (QMessageBox::question(this, "Export complete", "Your video is ready.\n\nShow it in its folder?") == QMessageBox::Yes)
+            m_go->setText(TR("Export again"));
+            if (QMessageBox::question(this, TR("Export complete"), TR("Your video is ready.\n\nShow it in its folder?")) == QMessageBox::Yes)
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(out).absolutePath()));
         } else {
             m_bar->setValue(0);
@@ -224,7 +228,7 @@ void ExportDialog::startExport() {
 void ExportDialog::reject() {
     if (m_exporter) {
         m_exporter->cancel();
-        m_status->setText("Cancelling…");
+        m_status->setText(TR("Cancelling…"));
         return;
     }
     QDialog::reject();
@@ -240,14 +244,14 @@ void ExportDialog::closeEvent(QCloseEvent* e) {
 
 // ===================================================================== Sequence
 SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(parent) {
-    setWindowTitle("Sequence Settings");
+    setWindowTitle(TR("Sequence Settings"));
     setMinimumWidth(380);
     m_preset = new QComboBox;
     struct P { const char* name; int w, h; };
     const P presets[] = {{"Custom", 0, 0}, {"HD 1080p  (1920 × 1080)", 1920, 1080}, {"HD 720p  (1280 × 720)", 1280, 720},
                          {"4K UHD  (3840 × 2160)", 3840, 2160}, {"Vertical 1080 × 1920 (Reels / TikTok)", 1080, 1920},
                          {"Square 1080 × 1080", 1080, 1080}};
-    for (const P& p : presets) m_preset->addItem(p.name, QSize(p.w, p.h));
+    for (const P& p : presets) m_preset->addItem(TR(p.name), QSize(p.w, p.h));
     m_w = new QSpinBox;
     m_w->setRange(16, 8192);
     m_w->setValue(tl.width);
@@ -256,7 +260,7 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
     m_h->setValue(tl.height);
     m_fps = new QComboBox;
     for (double f : {23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0})
-        m_fps->addItem(QString::number(f, 'f', f == std::floor(f) ? 0 : 3) + " fps", f);
+        m_fps->addItem(QString::number(f, 'f', f == std::floor(f) ? 0 : 3) + TR(" fps"), f);
     int fi = 0;
     for (int i = 0; i < m_fps->count(); ++i)
         if (std::abs(m_fps->itemData(i).toDouble() - tl.fps) < 0.01) fi = i;
@@ -273,10 +277,10 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
     auto* form = new QFormLayout;
     form->setVerticalSpacing(10);
     form->setHorizontalSpacing(16);
-    form->addRow("Preset", m_preset);
-    form->addRow("Frame width", m_w);
-    form->addRow("Frame height", m_h);
-    form->addRow("Frame rate", m_fps);
+    form->addRow(TR("Preset"), m_preset);
+    form->addRow(TR("Frame width"), m_w);
+    form->addRow(TR("Frame height"), m_h);
+    form->addRow(TR("Frame rate"), m_fps);
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     bb->button(QDialogButtonBox::Ok)->setObjectName("primary");
     connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -284,7 +288,7 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(20, 18, 20, 18);
     lay->setSpacing(14);
-    auto* title = new QLabel("Sequence Settings");
+    auto* title = new QLabel(TR("Sequence Settings"));
     title->setStyleSheet("font-size:16px; font-weight:700;");
     lay->addWidget(title);
     lay->addLayout(form);
@@ -294,7 +298,7 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
 // ===================================================================== Speed
 SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps, QWidget* parent)
     : QDialog(parent), m_span(durationSeconds * speedPercent / 100.0), m_fps(fps) {
-    setWindowTitle("Clip Speed / Duration");
+    setWindowTitle(TR("Clip Speed / Duration"));
     setMinimumWidth(380);
     m_speed = new QDoubleSpinBox;
     m_speed->setRange(5, 2000);
@@ -304,8 +308,8 @@ SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps
     m_speed->setValue(speedPercent);
     m_dur = new QLineEdit(formatTimecode(durationSeconds, fps));
     m_dur->setObjectName("speedDuration");
-    m_dur->setToolTip("Type a new duration (HH:MM:SS:FF) and the speed follows");
-    m_ripple = new QCheckBox("Ripple edit, shifting trailing clips");
+    m_dur->setToolTip(TR("Type a new duration (HH:MM:SS:FF) and the speed follows"));
+    m_ripple = new QCheckBox(TR("Ripple edit, shifting trailing clips"));
     m_ripple->setChecked(true);
 
     auto syncDuration = [this](double pct) {
@@ -322,10 +326,10 @@ SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps
     auto* form = new QFormLayout;
     form->setVerticalSpacing(10);
     form->setHorizontalSpacing(16);
-    form->addRow("Speed", m_speed);
-    form->addRow("Duration", m_dur);
-    auto* hint = new QLabel("100 % is normal speed. Above 100 % is fast motion, below is slow motion. "
-                            "The sound changes with the picture.");
+    form->addRow(TR("Speed"), m_speed);
+    form->addRow(TR("Duration"), m_dur);
+    auto* hint = new QLabel(TR("100 % is normal speed. Above 100 % is fast motion, below is slow motion. "
+                            "The sound changes with the picture."));
     hint->setWordWrap(true);
     hint->setObjectName("dim");
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -335,7 +339,7 @@ SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(20, 18, 20, 18);
     lay->setSpacing(12);
-    auto* title = new QLabel("Clip Speed / Duration");
+    auto* title = new QLabel(TR("Clip Speed / Duration"));
     title->setStyleSheet("font-size:16px; font-weight:700;");
     lay->addWidget(title);
     lay->addLayout(form);
@@ -346,7 +350,7 @@ SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps
 
 // ===================================================================== About
 AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle("About HR Premiere");
+    setWindowTitle(TR("About HR Premiere"));
     setFixedSize(420, 330);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(24, 24, 24, 20);
@@ -354,21 +358,21 @@ AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent) {
     auto* logo = new QLabel;
     logo->setPixmap(icons::logo(96));
     logo->setAlignment(Qt::AlignCenter);
-    auto* name = new QLabel("HR Premiere");
+    auto* name = new QLabel(TR("HR Premiere"));
     name->setAlignment(Qt::AlignCenter);
     name->setStyleSheet("font-size:24px; font-weight:700;");
-    auto* ver = new QLabel(QString("Version %1").arg(QCoreApplication::applicationVersion()));
+    auto* ver = new QLabel(QString(TR("Version %1")).arg(QCoreApplication::applicationVersion()));
     ver->setAlignment(Qt::AlignCenter);
     ver->setObjectName("dim");
-    auto* desc = new QLabel("A video editor built with C++, Qt 6 and FFmpeg.\n"
-                            "Multi-track timeline, effects, titles, audio mixing and export.");
+    auto* desc = new QLabel(TR("A video editor built with C++, Qt 6 and FFmpeg.\n"
+                            "Multi-track timeline, effects, titles, audio mixing and export."));
     desc->setAlignment(Qt::AlignCenter);
     desc->setWordWrap(true);
     desc->setObjectName("dim");
     auto* ok = new QPushButton("OK");
     ok->setObjectName("primary");
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
-    auto* owner = new QPushButton("الملكية  ·  Ownership");
+    auto* owner = new QPushButton(TR("الملكية  ·  Ownership"));
     connect(owner, &QPushButton::clicked, this, [this] { OwnershipDialog(this).exec(); });
     lay->addWidget(logo);
     lay->addWidget(name);
@@ -394,7 +398,7 @@ static QPixmap pixmapFromResource(const QString& path, QSize box) {
 }
 
 OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle("الملكية · Ownership");
+    setWindowTitle(TR("الملكية · Ownership"));
     setLayoutDirection(Qt::RightToLeft);   // Arabic page: the first card is on the right
     setMinimumSize(780, 660);
 
@@ -408,9 +412,9 @@ OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
     auto* title = new QLabel("الملكية");
     title->setAlignment(Qt::AlignCenter);
     title->setStyleSheet("font-size:30px; font-weight:800; background:transparent;");
-    auto* subtitle = new QLabel("من يملك البرنامج  ·  Who owns this program");
+    auto* subtitle = new QLabel(TR("من يملك البرنامج  ·  Who owns this program"));
     subtitle->setAlignment(Qt::AlignCenter);
-    subtitle->setStyleSheet("color:#8d8d8d; background:transparent;");
+    subtitle->setStyleSheet(QString("color:%1; background:transparent;").arg(theme::textDim.name()));
 
     // One card = a logo (with its name) and, optionally, a line of text.  Semi-transparent so the particles
     // keep flowing behind it.
@@ -430,14 +434,14 @@ OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
         if (!roleAr.isEmpty()) {
             auto* line = new QFrame;
             line->setFrameShape(QFrame::HLine);
-            line->setStyleSheet("color:#3b3b3b; background:transparent;");
+            line->setStyleSheet(QString("color:%1; background:transparent;").arg(theme::line.name()));
             v->addWidget(line);
             auto* ar = new QLabel(roleAr);
             ar->setAlignment(Qt::AlignCenter);
             ar->setStyleSheet(QString("font-size:22px; font-weight:800; color:%1;").arg(roleColor));
             auto* en = new QLabel(roleEn);
             en->setAlignment(Qt::AlignCenter);
-            en->setStyleSheet("color:#8d8d8d;");
+            en->setStyleSheet(QString("color:%1;").arg(theme::textDim.name()));
             v->addWidget(ar);
             v->addWidget(en);
         }
@@ -480,9 +484,9 @@ OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
     auto* ok = new QPushButton("OK");
     ok->setObjectName("primary");
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
-    auto* foot = new QLabel(QString("HR Premiere  ·  v%1").arg(QCoreApplication::applicationVersion()));
+    auto* foot = new QLabel(QString(TR("HR Premiere  ·  v%1")).arg(QCoreApplication::applicationVersion()));
     foot->setAlignment(Qt::AlignCenter);
-    foot->setStyleSheet("color:#8d8d8d; background:transparent;");
+    foot->setStyleSheet(QString("color:%1; background:transparent;").arg(theme::textDim.name()));
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(30, 26, 30, 22);
@@ -522,25 +526,25 @@ void OwnershipDialog::hideEvent(QHideEvent* e) {
 
 // ===================================================================== Shortcuts
 ShortcutsDialog::ShortcutsDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle("Keyboard Shortcuts");
+    setWindowTitle(TR("Keyboard Shortcuts"));
     resize(520, 560);
     const QVector<QPair<QString, QString>> rows = {
-        {"Space", "Play / stop"}, {"Left / Right", "Step one frame"}, {"Shift + Left / Right", "Step five frames"},
-        {"Up / Down", "Previous / next edit point"}, {"Home / End", "Go to start / end"},
-        {"V", "Selection tool"}, {"A", "Track Select Forward tool"}, {"B", "Ripple Edit tool"}, {"C", "Razor tool"},
-        {"H", "Hand tool"}, {"Z", "Zoom tool"}, {"T", "Type tool (adds a title)"},
-        {"Ctrl + K", "Add edit (split) at the playhead"}, {"Ctrl + Shift + K", "Add edit to all tracks"},
-        {"Delete", "Delete selected clips"}, {"Shift + Delete", "Ripple delete"},
-        {"Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"}, {"Ctrl + C / X / V", "Copy / cut / paste clips"},
-        {"Ctrl + A", "Select all clips"}, {"Ctrl + L", "Link / unlink selected clips"},
-        {"Ctrl + R", "Clip speed / duration (slow or fast motion)"}, {"Ctrl + Shift + R", "Record a voice-over (microphone)"},
-        {"I / O", "Mark In / Mark Out"}, {"Ctrl + Shift + X", "Clear In and Out"}, {"M", "Add marker"},
-        {"S", "Toggle snapping"}, {"+ / -", "Zoom timeline in / out"}, {"\\", "Zoom timeline to fit"},
-        {",  /  .", "Insert / overwrite from Source monitor"},
-        {"Ctrl + I", "Import media"}, {"Ctrl + S", "Save project"}, {"Ctrl + M", "Export media"},
+        {"Space", TR("Play / stop")}, {"Left / Right", TR("Step one frame")}, {"Shift + Left / Right", TR("Step five frames")},
+        {"Up / Down", TR("Previous / next edit point")}, {"Home / End", TR("Go to start / end")},
+        {"V", TR("Selection tool")}, {"A", TR("Track Select Forward tool")}, {"B", TR("Ripple Edit tool")}, {"C", TR("Razor tool")},
+        {"H", TR("Hand tool")}, {"Z", TR("Zoom tool")}, {"T", TR("Type tool (adds a title)")},
+        {"Ctrl + K", TR("Add edit (split) at the playhead")}, {"Ctrl + Shift + K", TR("Add edit to all tracks")},
+        {"Delete", TR("Delete selected clips")}, {"Shift + Delete", TR("Ripple delete")},
+        {"Ctrl + Z / Ctrl + Shift + Z", TR("Undo / redo")}, {"Ctrl + C / X / V", TR("Copy / cut / paste clips")},
+        {"Ctrl + A", TR("Select all clips")}, {"Ctrl + L", TR("Link / unlink selected clips")},
+        {"Ctrl + R", TR("Clip speed / duration (slow or fast motion)")}, {"Ctrl + Shift + R", TR("Record a voice-over (microphone)")},
+        {"I / O", TR("Mark In / Mark Out")}, {"Ctrl + Shift + X", TR("Clear In and Out")}, {"M", TR("Add marker")},
+        {"S", TR("Toggle snapping")}, {"+ / -", TR("Zoom timeline in / out")}, {"\\", TR("Zoom timeline to fit")},
+        {",  /  .", TR("Insert / overwrite from Source monitor")},
+        {"Ctrl + I", TR("Import media")}, {"Ctrl + S", TR("Save project")}, {"Ctrl + M", TR("Export media")},
     };
     auto* t = new QTableWidget(rows.size(), 2);
-    t->setHorizontalHeaderLabels({"Shortcut", "Action"});
+    t->setHorizontalHeaderLabels({TR("Shortcut"), TR("Action")});
     t->verticalHeader()->setVisible(false);
     t->horizontalHeader()->setStretchLastSection(true);
     t->setColumnWidth(0, 210);
@@ -553,6 +557,180 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent) : QDialog(parent) {
     }
     auto* lay = new QVBoxLayout(this);
     lay->addWidget(t);
+}
+
+// ===================================================================== Language (first start)
+LanguageDialog::LanguageDialog(QWidget* parent) : QDialog(parent) {
+    setWindowTitle(QString::fromUtf8("HR Premiere  ·  اللغة / Language"));
+    setMinimumWidth(460);
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(28, 24, 28, 24);
+    lay->setSpacing(14);
+    auto* logo = new QLabel;
+    logo->setPixmap(icons::logo(72));
+    logo->setAlignment(Qt::AlignCenter);
+    lay->addWidget(logo);
+    auto* title = new QLabel(QString::fromUtf8("اختر لغة البرنامج\nChoose the language of the program"));
+    title->setAlignment(Qt::AlignCenter);
+    title->setStyleSheet("font-size:17px; font-weight:700;");
+    lay->addWidget(title);
+    auto* note = new QLabel(QString::fromUtf8("يمكنك تغييرها لاحقاً من تحرير ▸ الإعدادات\nYou can change it later in Edit ▸ Preferences"));
+    note->setAlignment(Qt::AlignCenter);
+    note->setObjectName("dim");
+    lay->addWidget(note);
+    auto* row = new QHBoxLayout;
+    row->setSpacing(14);
+    for (const char* c : {"ar", "en"}) {
+        const bool ar = QString(c) == "ar";
+        auto* b = new QPushButton(ar ? QString::fromUtf8("العربية") : QString("English"));
+        b->setMinimumHeight(64);
+        b->setObjectName(ar ? "primary" : "");
+        QFont f = b->font();
+        f.setPixelSize(20);
+        f.setBold(true);
+        b->setFont(f);
+        connect(b, &QPushButton::clicked, this, [this, c] { m_code = c; accept(); });
+        row->addWidget(b);
+    }
+    lay->addLayout(row);
+}
+
+// ===================================================================== Preferences
+static QPixmap themeSwatch(const theme::Theme& t) {
+    QPixmap pm(112, 70);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(t.line, 1));
+    p.setBrush(t.bg1);
+    p.drawRoundedRect(QRectF(0.5, 0.5, 111, 69), 7, 7);
+    p.setPen(Qt::NoPen);
+    p.setBrush(t.bg2);
+    p.drawRoundedRect(QRectF(6, 6, 100, 12), 3, 3);                  // menu bar
+    p.setBrush(t.bg3);
+    p.drawRoundedRect(QRectF(6, 22, 46, 26), 3, 3);                  // monitor
+    p.drawRoundedRect(QRectF(56, 22, 50, 26), 3, 3);
+    p.setBrush(t.accent);
+    p.drawRoundedRect(QRectF(10, 54, 40, 8), 3, 3);                  // clips
+    p.setBrush(t.accentHi);
+    p.drawRoundedRect(QRectF(54, 54, 24, 8), 3, 3);
+    p.setBrush(t.textDim);
+    p.drawRoundedRect(QRectF(82, 54, 22, 8), 3, 3);
+    return pm;
+}
+
+PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
+    setWindowTitle(TR("Preferences"));
+    setMinimumWidth(560);
+    m_startTheme = theme::currentId();
+    m_startAccent = theme::accentOverride();
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(20, 18, 20, 18);
+    lay->setSpacing(12);
+
+    auto* title = new QLabel(TR("Preferences"));
+    title->setStyleSheet("font-size:16px; font-weight:700;");
+    lay->addWidget(title);
+
+    // ---- language
+    auto* langTitle = new QLabel(TR("Language"));
+    langTitle->setObjectName("accentText");
+    lay->addWidget(langTitle);
+    m_lang = new QComboBox;
+    m_lang->addItem(i18n::nativeName(i18n::Lang::Arabic), "ar");
+    m_lang->addItem(i18n::nativeName(i18n::Lang::English), "en");
+    m_lang->setCurrentIndex(std::max(0, m_lang->findData(i18n::code(i18n::current()))));
+    lay->addWidget(m_lang);
+    auto* langNote = new QLabel(TR("The language changes after HR Premiere is restarted."));
+    langNote->setObjectName("dim");
+    langNote->setWordWrap(true);
+    lay->addWidget(langNote);
+
+    // ---- colours
+    auto* themeTitle = new QLabel(TR("Colours"));
+    themeTitle->setObjectName("accentText");
+    lay->addWidget(themeTitle);
+    m_themes = new QListWidget;
+    m_themes->setViewMode(QListView::IconMode);
+    m_themes->setIconSize(QSize(112, 70));
+    m_themes->setMovement(QListView::Static);
+    m_themes->setResizeMode(QListView::Adjust);
+    m_themes->setWrapping(true);
+    m_themes->setSpacing(8);
+    m_themes->setUniformItemSizes(true);
+    m_themes->setMinimumHeight(250);
+    m_themes->setSelectionMode(QAbstractItemView::SingleSelection);
+    for (const theme::Theme& t : theme::all()) {
+        auto* it = new QListWidgetItem(QIcon(themeSwatch(t)), TR(t.name));
+        it->setData(Qt::UserRole, t.id);
+        it->setTextAlignment(Qt::AlignHCenter);
+        m_themes->addItem(it);
+        if (t.id == theme::currentId()) m_themes->setCurrentItem(it);
+    }
+    lay->addWidget(m_themes);
+    connect(m_themes, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* it) {
+        if (it) pickTheme(it->data(Qt::UserRole).toString());
+    });
+
+    auto* row = new QHBoxLayout;
+    m_accentBtn = new QPushButton(TR("Accent colour…"));
+    auto* resetAccent = new QPushButton(TR("Theme's own accent"));
+    auto* classic = new QPushButton(TR("Back to the classic look"));
+    classic->setToolTip(TR("The traditional dark grey look"));
+    row->addWidget(m_accentBtn);
+    row->addWidget(resetAccent);
+    row->addStretch(1);
+    row->addWidget(classic);
+    lay->addLayout(row);
+    connect(m_accentBtn, &QPushButton::clicked, this, &PreferencesDialog::chooseAccent);
+    connect(resetAccent, &QPushButton::clicked, this, [this] {
+        theme::use(theme::currentId());
+        theme::refresh();
+    });
+    connect(classic, &QPushButton::clicked, this, [this] {
+        theme::use(theme::kClassicId);
+        theme::refresh();
+        for (int i = 0; i < m_themes->count(); ++i)
+            if (m_themes->item(i)->data(Qt::UserRole).toString() == theme::kClassicId) {
+                QSignalBlocker b(m_themes);
+                m_themes->setCurrentRow(i);
+            }
+    });
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    bb->button(QDialogButtonBox::Ok)->setObjectName("primary");
+    bb->button(QDialogButtonBox::Ok)->setText(TR("OK"));
+    bb->button(QDialogButtonBox::Cancel)->setText(TR("Cancel"));
+    connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    lay->addWidget(bb);
+}
+
+void PreferencesDialog::pickTheme(const QString& id) {
+    theme::use(id, theme::accentOverride());
+    theme::refresh();
+}
+
+void PreferencesDialog::chooseAccent() {
+    const QColor c = QColorDialog::getColor(theme::accent, this, TR("Accent colour"));
+    if (!c.isValid()) return;
+    theme::use(theme::currentId(), c);
+    theme::refresh();
+}
+
+bool PreferencesDialog::languageChanged() const { return chosenLanguageCode() != i18n::code(i18n::current()); }
+QString PreferencesDialog::chosenLanguageCode() const { return m_lang->currentData().toString(); }
+
+void PreferencesDialog::accept() {
+    theme::save();
+    if (languageChanged()) i18n::saveLanguageCode(chosenLanguageCode());
+    QDialog::accept();
+}
+
+void PreferencesDialog::reject() {
+    theme::use(m_startTheme, m_startAccent);
+    theme::refresh();
+    QDialog::reject();
 }
 
 }  // namespace hr

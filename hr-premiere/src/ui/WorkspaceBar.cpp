@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "WorkspaceBar.h"
 
 #include "Icons.h"
@@ -30,8 +31,8 @@ QRectF WorkspaceBar::tabRect(int i) const {
     f.setPixelSize(13);
     const QFontMetricsF fm(f);
     double x = 188;
-    for (int k = 0; k < i; ++k) x += fm.horizontalAdvance(m_names[k]) + 34;
-    return QRectF(x, 0, fm.horizontalAdvance(m_names[i]) + 34, height());
+    for (int k = 0; k < i; ++k) x += fm.horizontalAdvance(TR(m_names[k])) + 34;
+    return QRectF(x, 0, fm.horizontalAdvance(TR(m_names[i])) + 34, height());
 }
 
 void WorkspaceBar::paintEvent(QPaintEvent*) {
@@ -57,7 +58,7 @@ void WorkspaceBar::paintEvent(QPaintEvent*) {
         if (i == m_hover && !cur) p.fillRect(r.adjusted(2, 4, -2, -4), theme::bg4);
         p.setFont(f);
         p.setPen(cur ? Qt::white : theme::textDim);
-        p.drawText(r, Qt::AlignCenter, m_names[i]);
+        p.drawText(r, Qt::AlignCenter, TR(m_names[i]));
         if (cur) {
             p.setPen(Qt::NoPen);
             p.setBrush(theme::accent);
@@ -91,7 +92,7 @@ void WorkspaceBar::mouseMoveEvent(QMouseEvent* e) {
     if (h != m_hover) { m_hover = h; update(); }
     const bool onLogo = QRectF(8, 0, 170, height()).contains(e->position());
     setCursor(h >= 0 || onLogo ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    if (onLogo) setToolTip("الملكية · Ownership"); else setToolTip(QString());
+    if (onLogo) setToolTip(TR("الملكية · Ownership")); else setToolTip(QString());
 }
 
 void WorkspaceBar::leaveEvent(QEvent*) {

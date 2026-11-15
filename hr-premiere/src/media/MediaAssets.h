@@ -25,6 +25,9 @@ struct MediaAsset {
     bool wavesReady = false;
 };
 
+// Loudness of a media file: the largest sample of every 10 ms, as a byte (0..255). Synchronous.
+QVector<quint8> computePeaks100(const QString& path, double duration);
+
 class MediaAssets : public QObject {
     Q_OBJECT
 public:

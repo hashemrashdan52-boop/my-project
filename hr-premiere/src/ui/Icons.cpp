@@ -1,5 +1,7 @@
 #include "Icons.h"
 
+#include <QIconEngine>
+
 #include "Theme.h"
 
 #include <QPainter>
@@ -76,19 +78,47 @@ QPixmap pixmap(Name n, const QColor& color, int size) {
     return pm;
 }
 
-QIcon make(Name n, const QColor& color, const QColor& active) {
-    QIcon ic;
-    const QColor on = active.isValid() ? active : color;
-    for (int s : {16, 20, 24, 32}) {
-        ic.addPixmap(pixmap(n, color, s), QIcon::Normal, QIcon::Off);
-        ic.addPixmap(pixmap(n, on, s), QIcon::Normal, QIcon::On);
-        ic.addPixmap(pixmap(n, on, s), QIcon::Active, QIcon::Off);
-        ic.addPixmap(pixmap(n, theme::textDim.darker(130), s), QIcon::Disabled, QIcon::Off);
-    }
-    return ic;
-}
+// An icon that is drawn again every time it is needed, so it always has the colours of the current theme.
+namespace {
+class ThemedIconEngine : public QIconEngine {
+public:
+    ThemedIconEngine(Name n, const QColor& color, const QColor& active, bool followTheme)
+        : m_name(n), m_color(color), m_active(active), m_follow(followTheme) {}
 
-QIcon make(Name n) { return make(n, theme::text, QColor("#ffffff")); }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        const int px = std::max(1, std::max(size.width(), size.height()));
+        QColor normal = m_follow ? theme::text : m_color;
+        QColor on = m_active.isValid() ? m_active : (m_follow ? (theme::dark ? QColor("#ffffff") : theme::text) : normal);
+        QColor c = normal;
+        if (mode == QIcon::Disabled) c = theme::textDim.darker(130);
+        else if (state == QIcon::On || mode == QIcon::Active) c = on;
+        QPixmap pm(px, px);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.scale(px / 24.0, px / 24.0);
+        draw(p, m_name, c);
+        return pm;
+    }
+    void paint(QPainter* p, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+        const qreal dpr = p->device()->devicePixelRatioF();
+        QPixmap pm = pixmap(rect.size() * dpr, mode, state);
+        pm.setDevicePixelRatio(dpr);
+        p->drawPixmap(rect.topLeft(), pm);
+    }
+    QIconEngine* clone() const override { return new ThemedIconEngine(*this); }
+    QString key() const override { return QStringLiteral("hr-themed"); }
+
+private:
+    Name m_name;
+    QColor m_color, m_active;
+    bool m_follow;
+};
+}  // namespace
+
+QIcon make(Name n, const QColor& color, const QColor& active) { return QIcon(new ThemedIconEngine(n, color, active, false)); }
+
+QIcon make(Name n) { return QIcon(new ThemedIconEngine(n, QColor(), QColor(), true)); }
 
 QPixmap logo(int size) {
     static QSvgRenderer renderer(QStringLiteral(":/logo.svg"));

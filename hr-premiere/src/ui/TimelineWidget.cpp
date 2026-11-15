@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "TimelineWidget.h"
 
 #include "Icons.h"
@@ -309,7 +310,7 @@ void TimelineWidget::paintRuler(QPainter& p) {
     cf.setPixelSize(10);
     p.setFont(cf);
     p.drawText(QRect(10, 0, headerW() - 14, rulerH()), Qt::AlignVCenter | Qt::AlignLeft,
-               QString("%1 × %2   %3 fps").arg(tl.width).arg(tl.height).arg(tl.fps, 0, 'f', tl.fps == std::floor(tl.fps) ? 0 : 2));
+               QString(TR("%1 × %2   %3 fps")).arg(tl.width).arg(tl.height).arg(tl.fps, 0, 'f', tl.fps == std::floor(tl.fps) ? 0 : 2));
 }
 
 void TimelineWidget::paintRows(QPainter& p) {
@@ -338,7 +339,7 @@ void TimelineWidget::paintRows(QPainter& p) {
             rf.setPixelSize(11);
             rf.setBold(true);
             p.setFont(rf);
-            p.drawText(band.adjusted(8, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, "● REC");
+            p.drawText(band.adjusted(8, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, TR("● REC"));
         }
     }
     if (tl.isEmpty() && !m_dropActive) {
@@ -347,7 +348,7 @@ void TimelineWidget::paintRows(QPainter& p) {
         p.setFont(f);
         p.setPen(theme::textDim);
         const QRect area = contentRect();
-        p.drawText(area, Qt::AlignCenter, "Drag media here to start your sequence");
+        p.drawText(area, Qt::AlignCenter, TR("Drag media here to start your sequence"));
     }
 }
 
@@ -617,13 +618,13 @@ bool TimelineWidget::headerClick(const QPoint& p) {
         m_project->edit(text, [&](Timeline& t) { fn(t.tracks(r.type)[r.index]); });
     };
     if (p.x() >= headerW() - 34) {
-        toggle(tr.locked ? "Unlock track" : "Lock track", [](Track& t) { t.locked = !t.locked; });
+        toggle(tr.locked ? TR("Unlock track") : TR("Lock track"), [](Track& t) { t.locked = !t.locked; });
     } else if (r.type == TrackType::Video && p.x() >= headerW() - 62) {
-        toggle("Toggle track visibility", [](Track& t) { t.enabled = !t.enabled; });
+        toggle(TR("Toggle track visibility"), [](Track& t) { t.enabled = !t.enabled; });
     } else if (r.type == TrackType::Audio && p.x() >= headerW() - 92 && p.x() < headerW() - 68) {
-        toggle("Toggle mute", [](Track& t) { t.enabled = !t.enabled; });
+        toggle(TR("Toggle mute"), [](Track& t) { t.enabled = !t.enabled; });
     } else if (r.type == TrackType::Audio && p.x() >= headerW() - 68 && p.x() < headerW() - 44) {
-        toggle("Toggle solo", [](Track& t) { t.solo = !t.solo; });
+        toggle(TR("Toggle solo"), [](Track& t) { t.solo = !t.solo; });
     } else if (r.type == TrackType::Audio && p.x() >= 38 && p.x() < headerW() - 92) {
         emit voiceOverRequested(r.index);          // the microphone button
     } else if (p.x() < 38) {
@@ -738,10 +739,10 @@ void TimelineWidget::razorAt(const QPoint& p, bool allTracks) {
     Timeline probe = m_project->timeline();
     if (allTracks) {
         if (ops::splitAllAt(probe, t) > 0)
-            m_project->edit("Add edit to all tracks", [&](Timeline& tl) { ops::splitAllAt(tl, t); });
+            m_project->edit(TR("Add edit to all tracks"), [&](Timeline& tl) { ops::splitAllAt(tl, t); });
     } else if (!hit.clipId.isEmpty()) {
         if (ops::splitAt(probe, hit.clipId, t))
-            m_project->edit("Split clip", [&](Timeline& tl) { ops::splitAt(tl, hit.clipId, t); });
+            m_project->edit(TR("Split clip"), [&](Timeline& tl) { ops::splitAt(tl, hit.clipId, t); });
     }
 }
 
@@ -786,7 +787,7 @@ void TimelineWidget::updateDrag(const QPoint& p, Qt::KeyboardModifiers mods) {
         if (ri >= 0 && m_rows[ri].type == m_dragType) dTrack = m_rows[ri].index - m_dragRow;
         else if (ri >= 0) dTrack = 0;
         m_project->setTimelineLive(ops::moved(base, m_dragIds, dt, dTrack, m_dragType));
-        emit statusMessage(QString("Move  %1%2").arg(dt >= 0 ? "+" : "-").arg(formatTimecode(std::abs(dt), fps)));
+        emit statusMessage(QString(TR("Move  %1%2")).arg(dt >= 0 ? "+" : "-").arg(formatTimecode(std::abs(dt), fps)));
         break;
     }
     case Drag::TrimLeft:
@@ -814,7 +815,7 @@ void TimelineWidget::updateDrag(const QPoint& p, Qt::KeyboardModifiers mods) {
         ops::trim(t, m_dragIds, left, delta, m_tool == Tool::Ripple);
         m_project->setTimelineLive(t);
         const Clip* now = t.clip(m_pressHit.clipId);
-        if (now) emit statusMessage(QString("Duration  %1").arg(formatTimecode(now->duration, fps)));
+        if (now) emit statusMessage(QString(TR("Duration  %1")).arg(formatTimecode(now->duration, fps)));
         break;
     }
     case Drag::Marquee: {
@@ -847,7 +848,7 @@ void TimelineWidget::endDrag() {
     m_drag = Drag::None;
     m_snapLine = -1;
     if ((d == Drag::Move || d == Drag::TrimLeft || d == Drag::TrimRight) && m_dragMoved) {
-        const QString text = d == Drag::Move ? "Move clips" : (m_tool == Tool::Ripple ? "Ripple trim" : "Trim clip");
+        const QString text = d == Drag::Move ? TR("Move clips") : (m_tool == Tool::Ripple ? TR("Ripple trim") : TR("Trim clip"));
         m_project->commit(text, m_before);
     }
     emit statusMessage(QString());
@@ -1010,8 +1011,8 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         for (int i = 0; i < tl.markers.size(); ++i)
             if (std::abs(timeToX(tl.markers[i].time) - e->pos().x()) < 8) {
                 QMenu menu(this);
-                menu.addAction("Delete Marker", [this, i] {
-                    m_project->edit("Delete marker", [i](Timeline& t) { if (i < t.markers.size()) t.markers.removeAt(i); });
+                menu.addAction(TR("Delete Marker"), [this, i] {
+                    m_project->edit(TR("Delete marker"), [i](Timeline& t) { if (i < t.markers.size()) t.markers.removeAt(i); });
                 });
                 menu.exec(e->globalPos());
                 return;

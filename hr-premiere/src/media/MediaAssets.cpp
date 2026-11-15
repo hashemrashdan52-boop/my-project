@@ -88,14 +88,14 @@ void MediaAssets::runThumbs(MediaItem item) {
     QMetaObject::invokeMethod(this, [this, id = item.id] { emit updated(id); }, Qt::QueuedConnection);
 }
 
-void MediaAssets::runWaveform(MediaItem item) {
+QVector<quint8> computePeaks100(const QString& path, double duration) {
     AudioDecoder dec;
     QVector<quint8> p100;
-    if (dec.open(item.path)) {
+    if (dec.open(path)) {
         const int block = AudioDecoder::kRate / 100;  // 480 samples = 10 ms
         const int chunkBlocks = 100;                   // 1 s per read
         std::vector<float> buf(size_t(block) * chunkBlocks * 2);
-        const double total = std::max(0.0, item.duration);
+        const double total = std::max(0.0, duration);
         const qint64 blocks = qint64(std::ceil(total * 100.0));
         p100.reserve(int(blocks));
         double t = 0;
@@ -110,6 +110,11 @@ void MediaAssets::runWaveform(MediaItem item) {
             t += chunkBlocks / 100.0;
         }
     }
+    return p100;
+}
+
+void MediaAssets::runWaveform(MediaItem item) {
+    const QVector<quint8> p100 = computePeaks100(item.path, item.duration);
     auto pool = [](const QVector<quint8>& src, int factor) {
         QVector<quint8> out;
         out.reserve(src.size() / factor + 1);

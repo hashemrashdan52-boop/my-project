@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "EffectsBrowser.h"
 
 #include "Icons.h"
@@ -20,7 +21,7 @@ QMimeData* EffectTree::mimeData(const QList<QTreeWidgetItem*>& items) const {
 
 EffectsBrowser::EffectsBrowser(QWidget* parent) : QWidget(parent) {
     m_search = new QLineEdit(this);
-    m_search->setPlaceholderText("Search effects");
+    m_search->setPlaceholderText(TR("Search effects"));
     m_search->setClearButtonEnabled(true);
     m_tree = new EffectTree(this);
     m_tree->setHeaderHidden(true);
@@ -29,18 +30,18 @@ EffectsBrowser::EffectsBrowser(QWidget* parent) : QWidget(parent) {
     m_tree->setIndentation(16);
 
     for (bool video : {true, false}) {
-        auto* root = new QTreeWidgetItem(m_tree, {video ? "Video Effects" : "Audio Effects"});
+        auto* root = new QTreeWidgetItem(m_tree, {video ? TR("Video Effects") : TR("Audio Effects")});
         root->setIcon(0, icons::make(video ? icons::Film : icons::Music));
         QFont f = root->font(0);
         f.setBold(true);
         root->setFont(0, f);
         root->setFlags(Qt::ItemIsEnabled);
         for (const QString& cat : EffectRegistry::categories(video)) {
-            auto* catItem = new QTreeWidgetItem(root, {cat});
+            auto* catItem = new QTreeWidgetItem(root, {TR(cat)});
             catItem->setFlags(Qt::ItemIsEnabled);
             for (const EffectDef& d : EffectRegistry::all()) {
                 if (d.intrinsic || d.video != video || d.category != cat) continue;
-                auto* it = new QTreeWidgetItem(catItem, {d.name});
+                auto* it = new QTreeWidgetItem(catItem, {TR(d.name)});
                 it->setData(0, Qt::UserRole, d.type);
                 it->setIcon(0, icons::make(icons::Fx));
                 it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
