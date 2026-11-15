@@ -89,6 +89,7 @@ jobs:
         run: bash hr-premiere/scripts/package_windows.sh build dist/HR-Premiere
 
       - name: Smoke test the package on a clean PATH
+        id: smoke
         timeout-minutes: 5
         shell: pwsh
         run: |
@@ -131,9 +132,20 @@ jobs:
           if (-not (Test-Path $wav)) { throw "could not generate the test speech" }
           Write-Host "test speech: $((Get-Item $wav).Length) bytes"
 
+          # which Whisper options does the bundled ffmpeg really have? (printed for diagnosis)
+          Write-Host "---- ffmpeg -h filter=whisper ----"
+          $savedPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          & "$dir\ffmpeg.exe" -hide_banner -h filter=whisper 2>&1 | Select-Object -First 45 | ForEach-Object { Write-Host "$_" }
+          $ErrorActionPreference = $savedPreference
+          $global:LASTEXITCODE = 0     # this call is only informational; the step must not end with its exit code
+          Write-Host "----------------------------------"
+
           $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
           $srt = Join-Path (Get-Location) "dist\speech_test.srt"
-          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList "--transcribe","`\"$wav`\"","--model","tiny","--language","en","--out","`\"$srt`\"" -WorkingDirectory $dir -PassThru
+          # (one argument string with the paths quoted: an array with escaped quotes breaks Start-Process)
+          $argLine = "--transcribe `"$wav`" --model tiny --language en --out `"$srt`""
+          Write-Host "HRPremiere.exe $argLine"
+          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList $argLine -WorkingDirectory $dir -PassThru
           if (-not $p.WaitForExit(900000)) { $p.Kill(); throw "speech recognition took longer than 15 minutes" }
           Write-Host "exit code: $($p.ExitCode)"
           if (Test-Path "$srt.log") { Write-Host "---- log ----"; Get-Content "$srt.log" }
@@ -142,7 +154,11 @@ jobs:
           Write-Host "---- subtitles ----"; Write-Host $text
           if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
 
+      # The installer and the downloads are produced whenever the package itself works (clean-PATH smoke test passed),
+      # even if the AI test failed - that test needs the internet to fetch a model, so a network hiccup must not
+      # keep the program from being built. The job still ends red in that case.
       - name: Build installer (Inno Setup)
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
@@ -152,6 +168,7 @@ jobs:
           if (-not (Test-Path "dist\HR-Premiere-Setup.exe")) { throw "the installer was not created in dist\" }
 
       - name: Upload installer
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: HR-Premiere-Setup
@@ -160,6 +177,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload portable version
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: HR-Premiere-portable
@@ -167,6 +185,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload smoke-test screenshot
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: smoke-test-screenshot
