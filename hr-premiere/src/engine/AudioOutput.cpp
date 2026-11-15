@@ -22,28 +22,36 @@ public:
     qint64 writeData(const char*, qint64) override { return -1; }
     qint64 readData(char* data, qint64 maxlen) override {
         const int bytesPerFrame = m_o->m_float ? 8 : 4;
-        int frames = int(std::min<qint64>(maxlen / bytesPerFrame, 4096));
-        if (frames <= 0) return 0;
+        // The sink asks for as much as it has room for: give it all of that (capped), in small blocks.
+        qint64 remaining = std::min<qint64>(maxlen / bytesPerFrame, 16384);
+        if (remaining <= 0) return 0;
         std::shared_ptr<const Timeline> tl;
         {
             QMutexLocker l(&m_o->m_tlMutex);
             tl = m_o->m_timeline;
         }
-        m_buf.resize(size_t(frames) * 2);
-        if (tl) m_o->m_mixer->render(*tl, m_sample, frames, m_buf.data());
-        else std::fill(m_buf.begin(), m_buf.end(), 0.0f);
-        m_sample += frames;
-        if (m_o->m_float) {
-            std::memcpy(data, m_buf.data(), size_t(frames) * 8);
-        } else {
-            int16_t* d = reinterpret_cast<int16_t*>(data);
-            for (size_t i = 0; i < m_buf.size(); ++i) d[i] = int16_t(std::lround(m_buf[i] * 32767.0f));
+        qint64 written = 0;
+        while (remaining > 0) {
+            const int frames = int(std::min<qint64>(remaining, 4096));
+            m_buf.resize(size_t(frames) * 2);
+            if (tl) m_o->m_mixer->render(*tl, m_sample, frames, m_buf.data());
+            else std::fill(m_buf.begin(), m_buf.end(), 0.0f);
+            m_sample += frames;
+            char* dst = data + written;
+            if (m_o->m_float) {
+                std::memcpy(dst, m_buf.data(), size_t(frames) * 8);
+            } else {
+                int16_t* d = reinterpret_cast<int16_t*>(dst);
+                for (size_t i = 0; i < m_buf.size(); ++i) d[i] = int16_t(std::lround(m_buf[i] * 32767.0f));
+            }
+            // simple peak hold with decay for the meters
+            const float l = m_o->m_mixer->peakL(), r = m_o->m_mixer->peakR();
+            m_o->m_levelL.store(std::max(l, m_o->m_levelL.load() * 0.9f));
+            m_o->m_levelR.store(std::max(r, m_o->m_levelR.load() * 0.9f));
+            written += qint64(frames) * bytesPerFrame;
+            remaining -= frames;
         }
-        // simple peak hold with decay for the meters
-        const float l = m_o->m_mixer->peakL(), r = m_o->m_mixer->peakR();
-        m_o->m_levelL.store(std::max(l, m_o->m_levelL.load() * 0.9f));
-        m_o->m_levelR.store(std::max(r, m_o->m_levelR.load() * 0.9f));
-        return qint64(frames) * bytesPerFrame;
+        return written;
     }
 
 private:
@@ -111,7 +119,7 @@ void AudioOutput::doStart(std::shared_ptr<const Timeline> tl, double fromTime) {
         if (!dev.isFormatSupported(fmt)) return;
     }
     m_sink = std::make_unique<QAudioSink>(dev, fmt);
-    m_sink->setBufferSize(AudioMixer::kRate / 5 * (m_float ? 8 : 4));  // ~200 ms
+    m_sink->setBufferSize(AudioMixer::kRate / 10 * (m_float ? 8 : 4));  // ~100 ms keeps picture and sound close together
     m_device = std::make_unique<MixerDevice>(this);
     m_device->reset(qint64(std::llround(fromTime * AudioMixer::kRate)));
     m_clockTime.store(fromTime);
@@ -138,7 +146,9 @@ void AudioOutput::doStop() {
 
 void AudioOutput::updateClock() {
     if (!m_sink) return;
-    m_clockTime.store(m_from + double(m_sink->processedUSecs()) / 1e6);
+    // HR_AUDIO_OFFSET_MS lets you nudge the picture against the sound on devices whose clock is early / late
+    static const double offset = qEnvironmentVariable("HR_AUDIO_OFFSET_MS", "0").toDouble() / 1000.0;
+    m_clockTime.store(m_from + double(m_sink->processedUSecs()) / 1e6 + offset);
     m_clockWallNs.store(steadyNs());
 }
 

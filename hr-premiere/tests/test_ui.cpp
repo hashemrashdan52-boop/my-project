@@ -2,6 +2,8 @@
 #include "core/EditOps.h"
 #include "engine/Exporter.h"
 #include "ui/MainWindow.h"
+#include "ui/MonitorPanel.h"
+#include "ui/ProjectPanel.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -284,6 +286,85 @@ private slots:
         QTest::keyClick(w, Qt::Key_V, Qt::ControlModifier);
         QCOMPARE(proj()->timeline().video[0].clips.size(), 3);
         QVERIFY(std::abs(proj()->timeline().video[0].clips[2].start - 10.0) < 0.05);
+    }
+
+
+    void sourceMonitorMarksAndInsert() {
+        resetTimeline();
+        const QString id = proj()->importFile(green);   // 3 s with audio
+        QVERIFY(!id.isEmpty());
+        settle();
+        auto* panel = w->findChild<ProjectPanel*>();
+        QVERIFY(panel);
+        emit panel->openInSource(id);                   // what a double-click in the Project panel does
+        settle();
+        MonitorPanel* source = nullptr;
+        for (MonitorPanel* m : w->findChildren<MonitorPanel*>())
+            if (m->player() != w->program()) source = m;
+        QVERIFY(source);
+        QVERIFY(std::abs(source->player()->duration() - 3.0) < 0.15);
+        // mark 1 s .. 2.5 s through the monitor's signals
+        source->player()->seek(1.0);
+        emit source->markInRequested(1.0);
+        emit source->markOutRequested(2.5);
+        QVERIFY(std::abs(proj()->mediaById(id)->markIn - 1.0) < 1e-6);
+        QVERIFY(std::abs(proj()->mediaById(id)->markOut - 2.5) < 1e-6);
+        // overwrite at the playhead (4 s)
+        w->program()->seek(4.0);
+        emit source->overwriteRequested();
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+        const Clip c = proj()->timeline().video[0].clips[0];
+        QVERIFY(std::abs(c.start - 4.0) < 0.05);
+        QVERIFY(std::abs(c.srcIn - 1.0) < 1e-6);
+        QVERIFY(std::abs(c.duration - 1.5) < 0.05);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 1);
+        // insert at 4.5 s opens a gap and pushes the rest of the clip later
+        w->program()->seek(4.5);
+        emit source->insertRequested();
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 3);
+        QVERIFY(std::abs(proj()->timeline().duration() - 7.0) < 0.1);
+    }
+
+    void effectDraggedOntoClip() {
+        load();
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(red0.id);
+        auto* mime = new QMimeData;
+        mime->setData("application/x-hr-effect", "invert");
+        const QPoint pos = at(r, 0.5, 0.6);
+        QDragEnterEvent enter(pos, Qt::CopyAction, mime, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &enter);
+        QDropEvent drop(QPointF(pos), Qt::CopyAction, mime, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &drop);
+        QVERIFY(proj()->timeline().clip(red0.id)->effect("invert") != nullptr);
+        QVERIFY(proj()->timeline().clip(red0.id)->hasCustomEffects());
+        // an audio effect is refused on a picture clip
+        auto* mime2 = new QMimeData;
+        mime2->setData("application/x-hr-effect", "balance");
+        QDropEvent drop2(QPointF(pos), Qt::CopyAction, mime2, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &drop2);
+        QVERIFY(proj()->timeline().clip(red0.id)->effect("balance") == nullptr);
+        delete mime;
+        delete mime2;
+    }
+
+    void trackToggles() {
+        load();
+        // lock V1 through the header buttons: the click position is inside the lock icon of the V1 row
+        const Clip v = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(v.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 20, int(r.center().y())));   // lock icon
+        QVERIFY(proj()->timeline().video[0].locked);
+        // moving a clip on a locked track does nothing
+        const double before = proj()->timeline().video[0].clips[1].start;
+        const QRectF rb = tl()->clipRectForId(proj()->timeline().video[0].clips[1].id);
+        const QPoint p0 = at(rb, 0.5, 0.6);
+        QTest::mousePress(tl(), Qt::LeftButton, {}, p0);
+        QTest::mouseMove(tl(), p0 + QPoint(120, 0));
+        QTest::mouseRelease(tl(), Qt::LeftButton, {}, p0 + QPoint(120, 0));
+        QVERIFY(std::abs(proj()->timeline().video[0].clips[1].start - before) < 1e-6);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 20, int(r.center().y())));   // unlock
+        QVERIFY(!proj()->timeline().video[0].locked);
     }
 
     void rendersSensibleScreenshot() {

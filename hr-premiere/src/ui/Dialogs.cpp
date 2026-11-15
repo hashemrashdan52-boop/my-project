@@ -262,6 +262,9 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
         if (std::abs(m_fps->itemData(i).toDouble() - tl.fps) < 0.01) fi = i;
     m_fps->setCurrentIndex(fi);
 
+    // preselect the preset that matches the current size
+    for (int i = 1; i < m_preset->count(); ++i)
+        if (m_preset->itemData(i).toSize() == QSize(tl.width, tl.height)) m_preset->setCurrentIndex(i);
     connect(m_preset, &QComboBox::currentIndexChanged, this, [this] {
         const QSize s = m_preset->currentData().toSize();
         if (s.isValid() && !s.isEmpty()) { m_w->setValue(s.width()); m_h->setValue(s.height()); }

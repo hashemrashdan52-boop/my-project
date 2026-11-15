@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "core/EditOps.h"
+#include "ui/Dialogs.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -58,7 +59,8 @@ int main(int argc, char** argv) {
     QCommandLineOption size("size", "Window size, e.g. 1500x900.", "WxH");
     QCommandLineOption ws("workspace", "Workspace to start in.", "name");
     QCommandLineOption playFor("play", "Start playback right away (for testing).");
-    parser.addOptions({place, demo, shot, delay, size, ws, playFor});
+    QCommandLineOption dialog("dialog", "With --screenshot: capture a dialog (export, sequence, about, shortcuts) instead of the window.", "name");
+    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog});
     parser.process(app);
 
     const bool screenshotMode = parser.isSet(shot);
@@ -106,8 +108,17 @@ int main(int argc, char** argv) {
 
     if (screenshotMode) {
         const QString out = parser.value(shot);
-        QTimer::singleShot(parser.value(delay).toInt(), &app, [&window, &app, out] {
-            const bool ok = window.grab().save(out);
+        QDialog* dlg = nullptr;
+        if (parser.isSet(dialog)) {
+            const QString d = parser.value(dialog);
+            if (d == "export") dlg = new ExportDialog(window.project()->timeline(), "My Video", &window);
+            else if (d == "sequence") dlg = new SequenceDialog(window.project()->timeline(), &window);
+            else if (d == "about") dlg = new AboutDialog(&window);
+            else if (d == "shortcuts") dlg = new ShortcutsDialog(&window);
+            if (dlg) dlg->show();
+        }
+        QTimer::singleShot(parser.value(delay).toInt(), &app, [&window, &app, out, dlg] {
+            const bool ok = (dlg ? dlg->grab() : window.grab()).save(out);
             if (!ok) qWarning("could not write %s", qPrintable(out));
             app.exit(ok ? 0 : 1);
         });

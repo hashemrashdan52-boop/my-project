@@ -1,7 +1,10 @@
 name: Build HR Premiere
 
 on:
+  # Branches with an open pull request are built by the pull_request trigger below, so
+  # `push` only covers the default branches (this also publishes the "latest" release).
   push:
+    branches: [main, master, ccr-a54367a3-n34i2j]
     paths:
       - 'hr-premiere/**'
       - '.github/workflows/build-hr-premiere.yml'
@@ -15,6 +18,10 @@ on:
         description: 'Also publish the Windows build as the "hr-premiere-latest" release'
         type: boolean
         default: false
+
+concurrency:
+  group: hr-premiere-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   linux:
@@ -86,11 +93,20 @@ jobs:
           cd dist
           zip -r -q HR-Premiere-win64.zip HR-Premiere
 
-      - name: Smoke test the packaged app (starts, renders, quits)
+      - name: Smoke test the package on a clean PATH
         continue-on-error: true
+        timeout-minutes: 5
+        shell: pwsh
         run: |
-          cd dist/HR-Premiere
-          QT_QPA_PLATFORM=offscreen ./HRPremiere.exe --screenshot ../smoke.png --delay 1500 --size 1400x860
+          # Start the packaged app the way a user would: no MSYS2 on PATH, so a missing DLL or plugin shows up here.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+          $shot = Join-Path (Get-Location) "dist\smoke.png"
+          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList "--screenshot","`"$shot`"","--delay","2000","--size","1400x860" -WorkingDirectory $dir -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "the packaged app did not finish within 90 s" }
+          Write-Host "exit code: $($p.ExitCode)"
+          if (-not (Test-Path $shot)) { throw "the packaged app did not produce a screenshot (exit code $($p.ExitCode))" }
+          Write-Host "screenshot written: $((Get-Item $shot).Length) bytes"
 
       - name: Build installer (Inno Setup)
         continue-on-error: true
@@ -112,7 +128,7 @@ jobs:
   release:
     name: Publish "latest" release
     needs: [linux, windows]
-    if: (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+    if: (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
