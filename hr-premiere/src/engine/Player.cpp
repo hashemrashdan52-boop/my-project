@@ -2,9 +2,14 @@
 
 #include "core/Util.h"
 
+#include <chrono>
 #include <cmath>
 
 namespace hr {
+
+static qint64 steadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 Player::Player(QObject* parent) : QObject(parent) {
     m_tl = std::make_shared<const Timeline>(Timeline::makeDefault());
@@ -50,8 +55,8 @@ void Player::seek(double t) {
     if (m_playing) {
         m_playStart = t;
         m_wall.restart();
-        m_audioSynced = false;
-        if (m_useAudioClock) m_audio.start(m_tl, t);
+        m_restarts = 0;
+        if (m_useAudioClock) restartAudio(t);
     }
     emit positionChanged(m_pos);
     requestFrame(m_pos, !m_playing);
@@ -71,8 +76,8 @@ void Player::play() {
     m_playStart = m_pos;
     m_wall.start();
     m_useAudioClock = timelineHasAudio();
-    m_audioSynced = false;
-    if (m_useAudioClock) m_audio.start(m_tl, m_pos);
+    m_restarts = 0;
+    if (m_useAudioClock) restartAudio(m_pos);
     m_timer.start();
     emit playingChanged(true);
 }
@@ -92,17 +97,43 @@ void Player::toggle() {
     else play();
 }
 
+void Player::restartAudio(double picturePos) {
+    // The sound is started `m_lead` seconds ahead of the picture so that, once the device has
+    // finished its start-up latency, what you hear matches what you see.
+    m_audioFrom = std::max(0.0, picturePos + m_lead);
+    m_audio.start(m_tl, m_audioFrom);
+    m_audioMoving = false;
+    m_lastAc = m_audioFrom;
+    m_lastAcNs = m_lastRestartNs = steadyNs();
+}
+
 void Player::tick() {
+    // The picture runs on a smooth wall clock.  The audio clock is the truth about what is audible, so
+    // the picture clock is nudged towards it.  While the device has not started yet (or stalls) the
+    // picture simply keeps going; if the sound turns out to be far off (a device with a large
+    // latency, e.g. Bluetooth) the audio stream is restarted earlier by the measured offset.
     double wallT = m_playStart + m_wall.nsecsElapsed() / 1e9;
     if (m_useAudioClock && m_audio.isActive()) {
-        // the wall clock is smooth; the audio clock is the truth.  Re-anchor when they drift apart
-        // (this also makes the picture wait while the audio device is still starting up).
+        const qint64 nowNs = steadyNs();
         const double ac = m_audio.clock();
-        if (!m_audioSynced || std::fabs(wallT - ac) > 0.08) {
-            m_playStart = ac;
-            m_wall.restart();
-            m_audioSynced = true;
-            wallT = ac;
+        const double since = double(nowNs - m_lastAcNs) / 1e9;
+        if (since >= 0.15) {
+            const double rate = (ac - m_lastAc) / since;
+            m_audioMoving = rate > 0.6 && rate < 1.6;
+            m_lastAc = ac;
+            m_lastAcNs = nowNs;
+        }
+        if (m_audioMoving) {
+            const double drift = ac - wallT;  // > 0: the sound is ahead of the picture
+            m_lastDrift = drift;
+            if (std::fabs(drift) < 0.25) {
+                m_playStart += drift * 0.05;
+                wallT += drift * 0.05;
+            } else if (m_restarts < 3 && nowNs - m_lastRestartNs > 1000000000LL) {
+                m_lead = std::max(-3.0, std::min(3.0, m_lead - drift));
+                ++m_restarts;
+                restartAudio(wallT);
+            }
         }
     }
     const double t = wallT;

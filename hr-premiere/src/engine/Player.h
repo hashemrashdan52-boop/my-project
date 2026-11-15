@@ -25,6 +25,7 @@ public:
     double duration() const { return m_tl->duration(); }
     double fps() const { return m_tl->fps; }
     bool isPlaying() const { return m_playing; }
+    double audioDrift() const { return m_lastDrift; }  // sound minus picture, seconds (diagnostics)
 
 public slots:
     void seek(double t);
@@ -56,7 +57,16 @@ private:
     double m_playStart = 0;
     bool m_playing = false;
     bool m_useAudioClock = false;
-    bool m_audioSynced = false;
+    // audio / picture sync (see Player::tick)
+    void restartAudio(double picturePos);
+    double m_lead = 0;              // how much earlier than the picture the audio stream is started (device latency)
+    double m_audioFrom = 0;         // timeline position the current audio stream started from
+    double m_lastAc = 0;            // audio clock at the last rate measurement
+    qint64 m_lastAcNs = 0;
+    qint64 m_lastRestartNs = 0;
+    bool m_audioMoving = false;     // the device is really consuming samples
+    int m_restarts = 0;
+    double m_lastDrift = 0;
     QSize m_size{640, 360};
     qint64 m_lastFrameIdx = -1;
 };
