@@ -135,6 +135,12 @@ private slots:
         QVERIFY(makeVideo(blue, "blue", 2, false));
         QVERIFY(makeVideo(green, "green", 3, true));
         QStandardPaths::setTestModeEnabled(true);   // keep recordings / settings out of the real profile
+        // Settings: a file in the temporary folder on every platform.  (Without an organisation name QSettings cannot store
+        // anything on Windows, and the registry is not a place for tests to write to.)
+        QCoreApplication::setOrganizationName("HRTests");
+        QCoreApplication::setApplicationName("hr_ui_tests");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.filePath("settings"));
         theme::apply(*qApp);
         w = new MainWindow(false);
         w->resize(1500, 900);
