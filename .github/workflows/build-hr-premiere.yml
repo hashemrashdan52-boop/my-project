@@ -1,0 +1,304 @@
+name: Build HR Premiere
+
+on:
+  # Branches with an open pull request are built by the pull_request trigger below, so
+  # `push` only covers the default branches (this also publishes the "latest" release).
+  push:
+    branches: [main, master, ccr-a54367a3-n34i2j]
+    paths:
+      - 'hr-premiere/**'
+      - '.github/workflows/build-hr-premiere.yml'
+  pull_request:
+    paths:
+      - 'hr-premiere/**'
+      - '.github/workflows/build-hr-premiere.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Also publish the Windows build as the "hr-premiere-latest" release'
+        type: boolean
+        default: false
+
+concurrency:
+  group: hr-premiere-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux build + tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            qt6-base-dev qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
+            fonts-dejavu-core libxkbcommon-x11-0
+
+      - name: Configure
+        run: cmake -S hr-premiere -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (engine + UI, offscreen)
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  windows:
+    name: Windows build + package
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-ffmpeg
+
+      - name: Configure
+        run: cmake -S hr-premiere -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (engine + UI, offscreen)
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Package
+        run: bash hr-premiere/scripts/package_windows.sh build dist/HR-Premiere
+
+      - name: Smoke test the package on a clean PATH
+        id: smoke
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          # Run the package the way a user would: no MSYS2 on PATH, so a missing DLL or plugin shows up here.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+
+          # 1) the bundled ffmpeg must start and be able to encode H.264 + AAC (this is what Export uses)
+          $clip = Join-Path (Get-Location) "dist\ffmpeg_smoke.mp4"
+          & "$dir\ffmpeg.exe" -hide_banner -loglevel error -y -f lavfi -i "testsrc=size=320x240:rate=30:duration=1" -f lavfi -i "sine=duration=1" -c:v libx264 -pix_fmt yuv420p -c:a aac $clip
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $clip)) { throw "the bundled ffmpeg.exe could not encode a test clip (exit code $LASTEXITCODE)" }
+          Write-Host "ffmpeg.exe encoded a test clip: $((Get-Item $clip).Length) bytes"
+          Remove-Item $clip
+
+          # 2) the application must start, draw its window and write a screenshot
+          $shot = Join-Path (Get-Location) "dist\smoke.png"
+          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList "--screenshot","`"$shot`"","--delay","2000","--size","1400x860" -WorkingDirectory $dir -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "the packaged app did not finish within 90 s" }
+          Write-Host "exit code: $($p.ExitCode)"
+          if (-not (Test-Path $shot)) { throw "the packaged app did not produce a screenshot (exit code $($p.ExitCode))" }
+          $size = (Get-Item $shot).Length
+          Write-Host "screenshot written: $size bytes"
+          if ($size -lt 20000) { throw "the screenshot looks empty" }
+
+      - name: AI speech smoke test (real Whisper model, clean PATH)
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          # Make real speech with the built-in Windows voice, then let the packaged app understand it.
+          # This downloads the small "tiny" model from the public model host (no account) and runs the bundled
+          # ffmpeg's Whisper filter - exactly what the AI Assistant does for users.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+          Add-Type -AssemblyName System.Speech
+          $wav = Join-Path (Get-Location) "dist\speech_test.wav"
+          $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $synth.SetOutputToWaveFile($wav)
+          $synth.Speak("Hello. This is a test of the speech recognition. The quick brown fox jumps over the lazy dog.")
+          $synth.Dispose()
+          if (-not (Test-Path $wav)) { throw "could not generate the test speech" }
+          Write-Host "test speech: $((Get-Item $wav).Length) bytes"
+
+          # which Whisper options does the bundled ffmpeg really have? (printed for diagnosis)
+          Write-Host "---- ffmpeg -h filter=whisper ----"
+          $savedPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          & "$dir\ffmpeg.exe" -hide_banner -h filter=whisper 2>&1 | Select-Object -First 45 | ForEach-Object { Write-Host "$_" }
+          $ErrorActionPreference = $savedPreference
+          $global:LASTEXITCODE = 0     # this call is only informational; the step must not end with its exit code
+          Write-Host "----------------------------------"
+          Write-Host "---- ggml / whisper files in the package ----"
+          Get-ChildItem $dir -Filter "*.dll" | Where-Object { $_.Name -match 'ggml|whisper' } | ForEach-Object { Write-Host ("{0}  {1:N0} bytes" -f $_.Name, $_.Length) }
+
+          Write-Host ("CPU: " + (Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name))
+          Write-Host ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
+          $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
+          $srt = Join-Path (Get-Location) "dist\speech_test.srt"
+          # (one argument string with the paths quoted: an array with escaped quotes breaks Start-Process)
+          $argLine = "--transcribe `"$wav`" --model tiny --language en --out `"$srt`""
+          Write-Host "HRPremiere.exe $argLine"
+          $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList $argLine -WorkingDirectory $dir -PassThru
+          if (-not $p.WaitForExit(900000)) { $p.Kill(); throw "speech recognition took longer than 15 minutes" }
+          Write-Host "exit code: $($p.ExitCode)"
+          if (Test-Path "$srt.log") { Write-Host "---- log ----"; Get-Content "$srt.log" }
+          if ($p.ExitCode -ne 0) {
+            # show what ggml / whisper really did (which back-ends were loaded, where it stopped)
+            Write-Host "---- ffmpeg debug run (last 80 lines) ----"
+            $savedPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            Push-Location $env:HR_AI_DIR
+            & "$dir\ffmpeg.exe" -hide_banner -loglevel debug -nostdin -y -i $wav -vn -af "whisper=model=ggml-tiny.bin:language=en:queue=20:use_gpu=false:destination=diag.srt:format=srt" -f null - 2>&1 | Select-Object -Last 80 | ForEach-Object { Write-Host "$_" }
+            Write-Host ("ffmpeg debug run exit code: 0x{0:X8}" -f $LASTEXITCODE)
+            Pop-Location
+            $ErrorActionPreference = $savedPreference
+            throw "speech recognition failed (exit code $($p.ExitCode))"
+          }
+          $text = Get-Content $srt -Raw
+          Write-Host "---- subtitles ----"; Write-Host $text
+          if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
+
+      - name: AI accuracy on noisy speech (experiment - never fails the build)
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          # Does cleaning the sound before the speech model listens help?  Windows voice + pink noise at several
+          # signal-to-noise ratios, transcribed with no clean-up / light / strong; the score is the share of the
+          # spoken words that came back.  Synthetic speech is easier than a real voice: read the numbers as a trend.
+          $ErrorActionPreference = 'Continue'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $dir = (Resolve-Path "dist\HR-Premiere").Path
+          $ff = "$dir\ffmpeg.exe"
+          $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
+          Add-Type -AssemblyName System.Speech
+          $ref = "The quick brown fox jumps over the lazy dog. Please call Stella and ask her to bring these things with her from the store. We need a small plastic snake and a big toy frog for the kids. Today we are going to talk about editing video on the computer."
+          $speech = Join-Path (Get-Location) "dist\noise_speech.wav"
+          $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $synth.SetOutputToWaveFile($speech); $synth.Speak($ref); $synth.Dispose()
+          function MeanDb($file) {
+            $o = & $ff -hide_banner -nostats -i $file -af volumedetect -f null - 2>&1 | Out-String
+            return [double]([regex]::Match($o, 'mean_volume:\s*(-?[\d\.]+)').Groups[1].Value)
+          }
+          $noise = Join-Path (Get-Location) "dist\noise_pink.wav"
+          & $ff -hide_banner -loglevel error -y -f lavfi -i "anoisesrc=color=pink:amplitude=1.0:sample_rate=22050:duration=60" $noise
+          $speechDb = MeanDb $speech
+          $noiseDb = MeanDb $noise
+          Write-Host ("speech mean {0} dB, noise mean {1} dB" -f $speechDb, $noiseDb)
+          $refWords = @(($ref.ToLower() -replace '[^a-z ]', ' ') -split '\s+' | Where-Object { $_ })
+          function Score($srt) {
+            $text = ((Get-Content $srt) | Where-Object { $_ -notmatch '-->' -and $_ -notmatch '^\d+$' }) -join ' '
+            $hyp = [System.Collections.ArrayList]@(($text.ToLower() -replace '[^a-z ]', ' ') -split '\s+' | Where-Object { $_ })
+            $hit = 0
+            foreach ($w in $refWords) { $i = $hyp.IndexOf($w); if ($i -ge 0) { $hit++; $hyp.RemoveAt($i) } }
+            return @($hit, $refWords.Count, $text.Trim())
+          }
+          $results = @()
+          foreach ($snr in @(100, 12, 6, 2, -2)) {
+            $input = $speech
+            if ($snr -lt 100) {
+              $gain = ($speechDb - $snr) - $noiseDb
+              $input = Join-Path (Get-Location) ("dist\noisy_{0}.wav" -f $snr)
+              & $ff -hide_banner -loglevel error -y -i $speech -i $noise -filter_complex ("[1:a]volume={0}dB[n];[0:a][n]amix=inputs=2:duration=first:normalize=0" -f $gain.ToString([cultureinfo]::InvariantCulture)) $input
+            }
+            foreach ($mode in @('none', 'light', 'strong', 'auto')) {
+              $srt = Join-Path (Get-Location) ("dist\n_{0}_{1}.srt" -f $snr, $mode)
+              $argLine = "--transcribe `"$input`" --model tiny --language en --clean $mode --out `"$srt`""
+              $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList $argLine -WorkingDirectory $dir -PassThru
+              if (-not $p.WaitForExit(300000)) { $p.Kill() }
+              if (Test-Path $srt) {
+                $r = Score $srt
+                $line = "SNR {0,4} dB  clean-up {1,-6}  words {2,2}/{3}  ({4:P0})  {5}" -f $snr, $mode, $r[0], $r[1], ($r[0] / $r[1]), $r[2].Substring(0, [Math]::Min(70, $r[2].Length))
+              } else { $line = "SNR {0,4} dB  clean-up {1,-6}  no result (exit {2})" -f $snr, $mode, $p.ExitCode }
+              Write-Host $line
+              $results += $line
+              if ($mode -eq 'auto' -and (Test-Path "$srt.log")) { (Get-Content "$srt.log" | Select-String 'clean-up') | ForEach-Object { Write-Host "      $_" } }
+            }
+          }
+          "## AI accuracy on noisy speech`n" + ($results -join "`n") | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      # The installer and the downloads are produced whenever the package itself works (clean-PATH smoke test passed),
+      # even if the AI test failed - that test needs the internet to fetch a model, so a network hiccup must not
+      # keep the program from being built. The job still ends red in that case.
+      - name: Build installer (Inno Setup)
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          # The first page of the installer lets the user choose Arabic or English (installer\Arabic.isl).
+          & $iscc "/O$PWD\dist" "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "hr-premiere\installer\hrpremiere.iss"
+          if ($LASTEXITCODE -ne 0) {
+            # Never lose the installer because of a mistake in the Arabic page: build the English-only one and say so loudly.
+            Write-Host "::warning::The installer with the Arabic language page did not compile - building the English-only installer instead"
+            & $iscc "/O$PWD\dist" "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "/DNO_ARABIC=1" "hr-premiere\installer\hrpremiere.iss"
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          }
+          if (-not (Test-Path "dist\HR-Premiere-Setup.exe")) { throw "the installer was not created in dist\" }
+
+      - name: Upload installer
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Premiere-Setup
+          path: dist/HR-Premiere-Setup.exe
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload portable version
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Premiere-portable
+          path: dist/HR-Premiere
+          if-no-files-found: error
+
+      - name: Upload smoke-test screenshot
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-screenshot
+          path: dist/smoke.png
+          if-no-files-found: warn
+
+  release:
+    name: Publish "latest" release
+    needs: [linux, windows]
+    if: (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: HR-Premiere-Setup
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: HR-Premiere-portable
+          path: dist/HR-Premiere
+      - name: Zip the portable version
+        run: cd dist/HR-Premiere && zip -r -q ../HR-Premiere-win64.zip .
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hr-premiere-latest
+          name: HR Premiere – latest build
+          prerelease: true
+          body: |
+            Latest automatic build of HR Premiere for Windows.
+            - **HR-Premiere-Setup.exe** – installer
+            - **HR-Premiere-win64.zip** – portable (unzip and run `HRPremiere.exe`)
+          files: |
+            dist/HR-Premiere-win64.zip
+            dist/HR-Premiere-Setup.exe

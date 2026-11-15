@@ -1,0 +1,18 @@
+HR Premiere
+===========
+
+HR Premiere is a video editor written in C++ with Qt and FFmpeg.
+Source code: this repository (folder "hr-premiere").
+
+Third-party components shipped in this package
+----------------------------------------------
+* Qt 6 (Core, Gui, Widgets, Multimedia, Svg, Network)  - LGPL v3.  https://www.qt.io
+* FFmpeg libraries and ffmpeg.exe                       - built by the MSYS2 project with GPL-licensed
+  components (for example libx264 and libx265), so ffmpeg.exe is distributed under the GPL.
+  https://ffmpeg.org  -  https://www.msys2.org
+* The remaining DLLs are the runtime libraries that Qt and FFmpeg depend on (MSYS2 UCRT64 packages);
+  their licenses and sources are listed at https://packages.msys2.org
+
+You may replace any DLL or ffmpeg.exe in this folder with your own build.
+
+"HR Premiere" and its logo are independent and are not affiliated with Adobe.
