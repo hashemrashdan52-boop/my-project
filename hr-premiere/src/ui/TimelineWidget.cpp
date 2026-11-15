@@ -388,7 +388,7 @@ void TimelineWidget::paintClip(QPainter& p, const Clip& c, const Row& r, bool se
             const double x = body.left() + i * tileW;
             int idx = 0;
             if (c.mediaKind != MediaKind::Image && asset.stripStep > 0) {
-                const double st = c.srcIn + (i * tileW + tileW / 2) / m_pps;
+                const double st = c.srcIn + (i * tileW + tileW / 2) / m_pps * c.speed;
                 idx = std::max(0, std::min(int(asset.strip.size()) - 1, int(st / asset.stripStep)));
             }
             p.drawImage(QRectF(x, body.top(), tileW, tileH), asset.strip[idx]);
@@ -417,9 +417,9 @@ void TimelineWidget::paintClip(QPainter& p, const Clip& c, const Row& r, bool se
             p.setPen(QPen(base.lighter(dim ? 110 : 160), 1.0));
             const int xa = int(std::max(visL, rc.left())), xb = int(std::min(visR, rc.right()));
             for (int x = xa; x <= xb; ++x) {
-                const double ts = c.srcIn + (x - rc.left()) / m_pps;
+                const double ts = c.srcIn + (x - rc.left()) / m_pps * c.speed;
                 const int i0 = std::max(0, int(ts * rate));
-                const int i1 = std::max(i0, int((ts + 1.0 / m_pps) * rate));
+                const int i1 = std::max(i0, int((ts + c.speed / m_pps) * rate));
                 int m = 0;
                 for (int i = i0; i <= i1 && i < pk->size(); ++i) m = std::max<int>(m, (*pk)[i]);
                 const double a = std::min(1.0, m / 255.0 * gain) * half;
@@ -463,7 +463,7 @@ void TimelineWidget::paintClip(QPainter& p, const Clip& c, const Row& r, bool se
     }
     p.setPen(QColor(255, 255, 255, dim ? 150 : 235));
     p.drawText(QRectF(tx, rc.top(), rc.right() - tx - 4, kClipHead), Qt::AlignVCenter | Qt::AlignLeft,
-               elide(fm, c.name, int(rc.right() - tx - 6)));
+               elide(fm, c.speed != 1.0 ? QString("%1  [%2%]").arg(c.name).arg(int(std::lround(c.speed * 100))) : c.name, int(rc.right() - tx - 6)));
     p.restore();
 
     // outline

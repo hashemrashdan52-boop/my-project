@@ -114,7 +114,7 @@ void Renderer::drawClip(QPainter& p, const Clip& c, int trackIndex, double t, QS
     QImage img;
     QSizeF native;
     int rot = 0;
-    const double srcT = c.srcIn + local;
+    const double srcT = c.srcIn + local * c.speed;
     if (c.mediaKind == MediaKind::Image) {
         const int want = int(out.width() * userScale);
         img = m_pool->still(c.path, std::max(16, want));

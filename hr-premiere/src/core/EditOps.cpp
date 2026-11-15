@@ -55,7 +55,7 @@ void carve(Track& track, double s, double e, const QSet<QString>& ignore) {
         if (keepRight) {
             Clip right = c;
             right.start = e;
-            right.srcIn = c.srcIn + (e - c.start);
+            right.srcIn = c.srcIn + (e - c.start) * c.speed;
             right.duration = c.end() - e;
             if (keepLeft) right.id = newId();
             out.push_back(right);
@@ -77,7 +77,7 @@ static Clip splitPiece(Clip& c, double t, QHash<QString, QString>& linkMap) {
     Clip right = c;
     right.id = newId();
     right.start = t;
-    right.srcIn = c.srcIn + (t - c.start);
+    right.srcIn = c.srcIn + (t - c.start) * c.speed;
     right.duration = c.end() - t;
     c.duration = t - c.start;
     if (!c.linkId.isEmpty()) {
@@ -268,11 +268,11 @@ double clampTrimDelta(const Timeline& tl, const QSet<QString>& ids, bool leftEdg
         if (leftEdge) {
             b.hi = std::min(b.hi, c.duration - kMinDur);                       // shrink limit
             if (!ripple) b.lo = std::max(b.lo, prevEnd - c.start);              // neighbour
-            if (c.sourceLength > 0) b.lo = std::max(b.lo, -c.srcIn);            // source start
+            if (c.sourceLength > 0) b.lo = std::max(b.lo, -c.srcIn / c.speed);  // source start
         } else {
             b.lo = std::max(b.lo, -(c.duration - kMinDur));
             if (!ripple) b.hi = std::min(b.hi, nextStart - c.end());
-            if (c.sourceLength > 0) b.hi = std::min(b.hi, c.sourceLength - c.srcIn - c.duration);
+            if (c.sourceLength > 0) b.hi = std::min(b.hi, (c.sourceLength - c.srcIn) / c.speed - c.duration);
         }
     }
     if (b.lo > b.hi) return 0;
@@ -294,7 +294,7 @@ double trim(Timeline& tl, const QSet<QString>& ids, bool leftEdge, double delta,
         if (!c) continue;
         if (leftEdge) {
             if (!ripple) c->start += d;
-            c->srcIn += d;
+            c->srcIn += d * c->speed;
             c->duration -= d;
         } else {
             c->duration += d;
@@ -311,6 +311,54 @@ double trim(Timeline& tl, const QSet<QString>& ids, bool leftEdge, double delta,
             }
     }
     return d;
+}
+
+int setSpeed(Timeline& tl, const QSet<QString>& idsIn, double speed, bool ripple) {
+    speed = std::max(0.05, std::min(speed, 20.0));
+    const QSet<QString> ids = expandLinked(tl, idsIn);
+    QVector<QString> work;   // only clips that play footage from a file have a speed
+    for (const QString& id : ids) {
+        const Clip* c = tl.clip(id);
+        if (c && c->kind == ClipKind::Media && c->mediaKind != MediaKind::Image) work.push_back(id);
+    }
+    if (work.isEmpty()) return 0;
+    // from the last clip to the first, so the ripple shifts of later clips stay valid
+    std::sort(work.begin(), work.end(), [&](const QString& a, const QString& b) { return tl.clip(a)->start > tl.clip(b)->start; });
+    QSet<QString> done;
+    int changed = 0;
+    for (const QString& id : work) {
+        if (done.contains(id)) continue;
+        QSet<QString> group;   // this clip and the clips linked to it (picture + sound change together)
+        for (const QString& other : linkedIds(tl, id))
+            if (work.contains(other)) group.insert(other);
+        double oldEnd = 0, delta = 0;
+        bool first = true;
+        for (const QString& gid : group) {
+            Clip* c = tl.clip(gid);
+            oldEnd = std::max(oldEnd, c->end());
+            const double newDur = c->duration * c->speed / speed;
+            if (first) { delta = newDur - c->duration; first = false; }
+            c->speed = speed;
+            c->duration = newDur;
+            done.insert(gid);
+            ++changed;
+        }
+        if (ripple && std::abs(delta) > kEps) {
+            for (auto* tracks : {&tl.video, &tl.audio})
+                for (Track& tr : *tracks) {
+                    if (tr.locked) continue;
+                    for (Clip& c : tr.clips)
+                        if (!group.contains(c.id) && c.start >= oldEnd - kEps) c.start += delta;
+                }
+        } else if (!ripple && delta > kEps) {
+            for (const QString& gid : group) {          // a longer clip overwrites what follows on its own track
+                const ClipRef r = tl.find(gid);
+                const Clip copy = *tl.clip(r);
+                place(tl.tracks(r.type)[r.track], copy);
+            }
+        }
+    }
+    return changed;
 }
 
 QVector<Clip> makeClips(const MediaItem& m, double srcIn, double dur, double start) {

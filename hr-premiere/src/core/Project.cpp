@@ -195,6 +195,7 @@ static QJsonObject clipToJson(const Clip& c) {
     o["duration"] = c.duration;
     o["srcIn"] = c.srcIn;
     o["sourceLength"] = c.sourceLength;
+    o["speed"] = c.speed;
     o["enabled"] = c.enabled;
     QJsonArray fx;
     for (const auto& e : c.effects) fx.append(effectToJson(e));
@@ -214,6 +215,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.duration = o["duration"].toDouble();
     c.srcIn = o["srcIn"].toDouble();
     c.sourceLength = o["sourceLength"].toDouble();
+    c.speed = o["speed"].toDouble(1.0);
+    if (c.speed <= 0) c.speed = 1.0;
     c.enabled = o["enabled"].toBool(true);
     for (const auto& v : o["effects"].toArray()) c.effects.push_back(effectFromJson(v.toObject()));
     return c;

@@ -90,6 +90,7 @@ private:
     void applyEffectToSelection(const QString& type);
     void setFade(bool fadeIn);
     void toggleClipEnabled();
+    void changeSpeed();
     void removeEffectsFromSelection();
     void sequenceSettings();
     void addTrack(TrackType t);

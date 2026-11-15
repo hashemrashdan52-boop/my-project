@@ -846,6 +846,139 @@ private slots:
         }
     }
 
+
+    // ------------------------------------------------------------------ speed (slow / fast motion)
+    void speedChangeRetimesPictureAndSound() {
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("a.mp4", 20, true);
+        ops::placeClips(tl, ops::makeClips(m, 0, 10, 0), 0, 0, false);       // 0..10
+        ops::placeClips(tl, ops::makeClips(m, 10, 5, 10), 0, 0, false);      // 10..15
+        const QString first = tl.video[0].clips[0].id;
+        QCOMPARE(ops::setSpeed(tl, {first}, 2.0, true), 2);                   // the picture and its linked sound
+        QVERIFY(std::abs(tl.video[0].clips[0].duration - 5.0) < 1e-9);
+        QVERIFY(std::abs(tl.audio[0].clips[0].duration - 5.0) < 1e-9);
+        QVERIFY(std::abs(tl.video[0].clips[1].start - 5.0) < 1e-9);           // ripple: the next clip follows
+        QVERIFY(std::abs(tl.audio[0].clips[1].start - 5.0) < 1e-9);
+        QVERIFY(std::abs(tl.duration() - 10.0) < 1e-9);
+        // cutting at 2 s of the (fast) clip is 4 s into the footage
+        QVERIFY(ops::splitAt(tl, first, 2.0));
+        QVERIFY(std::abs(tl.video[0].clips[1].srcIn - 4.0) < 1e-9);
+        QVERIFY(std::abs(tl.video[0].clips[1].speed - 2.0) < 1e-9);
+        QVERIFY(std::abs(tl.video[0].clips[1].duration - 3.0) < 1e-9);
+        // slow motion without ripple overwrites the clip behind it
+        Timeline t2 = Timeline::makeDefault();
+        ops::placeClips(t2, ops::makeClips(m, 0, 10, 0), 0, 0, false);
+        ops::placeClips(t2, ops::makeClips(m, 10, 5, 10), 0, 0, false);
+        ops::setSpeed(t2, {t2.video[0].clips[0].id}, 0.5, false);
+        QVERIFY(std::abs(t2.video[0].clips[0].duration - 20.0) < 1e-9);
+        QCOMPARE(t2.video[0].clips.size(), 1);                                // the second clip is covered completely
+        // stills and titles have no speed
+        Timeline t3 = Timeline::makeDefault();
+        t3.video[0].clips.push_back(ops::makeTitle(0, 5, "T"));
+        QCOMPARE(ops::setSpeed(t3, {t3.video[0].clips[0].id}, 2.0, true), 0);
+    }
+
+    void speedLimitsTrimmingByTheFootageLeft() {
+        Timeline tl = Timeline::makeDefault();
+        MediaItem m = fakeVideo("a.mp4", 20, false);
+        ops::placeClips(tl, ops::makeClips(m, 0, 10, 0), 0, 0, false);
+        const QString id = tl.video[0].clips[0].id;
+        ops::setSpeed(tl, {id}, 2.0, true);                                    // 10 s of footage now last 5 s
+        ops::trim(tl, {id}, false, 100.0);                                     // the clip may use at most 20 s of footage = 10 s
+        QVERIFY2(std::abs(tl.video[0].clips[0].duration - 10.0) < 1e-9, qPrintable(QString::number(tl.video[0].clips[0].duration)));
+        ops::trim(tl, {id}, true, 2.0);                                        // 2 s off the start = 4 s of footage
+        QVERIFY(std::abs(tl.video[0].clips[0].srcIn - 4.0) < 1e-9);
+        QVERIFY(std::abs(tl.video[0].clips[0].duration - 8.0) < 1e-9);
+        ops::trim(tl, {id}, true, -100.0);                                     // back to the start of the footage, not further
+        QVERIFY(std::abs(tl.video[0].clips[0].srcIn) < 1e-9);
+    }
+
+    void speedIsSavedAndMapsTheTranscript() {
+        Project p;
+        const MediaItem item = *p.mediaById(p.importFile(red));
+        p.edit("add", [&](Timeline& t) { ops::placeClips(t, ops::makeClips(item, 0, 2, 0), 0, 0, false); });
+        p.edit("speed", [&](Timeline& t) { ops::setSpeed(t, {t.video[0].clips[0].id}, 2.0, true); });
+        const QString file = dir.filePath("speed.hrproj");
+        QVERIFY(p.save(file));
+        Project q;
+        QVERIFY(q.load(file));
+        QVERIFY(std::abs(q.timeline().video[0].clips[0].speed - 2.0) < 1e-9);
+        QVERIFY(std::abs(q.timeline().video[0].clips[0].duration - 1.0) < 1e-6);
+        // sentences move with the footage: footage 1.0..1.5 s is at 0.5..0.75 s on the timeline of a double-speed clip
+        MediaItem talk = talkingMedia();
+        talk.transcript = {{1.0, 1.5, "fast words"}};
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(talk, 0, 4, 0), 0, 0, false);
+        ops::setSpeed(tl, {tl.audio[0].clips[0].id}, 2.0, true);
+        const QVector<ai::TimelineSegment> ts = ai::transcriptOnTimeline(tl, {talk});
+        QCOMPARE(ts.size(), 1);
+        QVERIFY(std::abs(ts[0].start - 0.5) < 1e-9 && std::abs(ts[0].end - 0.75) < 1e-9);
+    }
+
+    void speedChangesTheRenderedFrames() {
+        const QString colors = dir.filePath("colors4.mp4");
+        QVERIFY(runFfmpeg({"-f", "lavfi", "-i", "color=c=0xff0000:s=320x180:r=30:d=1", "-f", "lavfi", "-i", "color=c=0x00ff00:s=320x180:r=30:d=1",
+                           "-f", "lavfi", "-i", "color=c=0x0000ff:s=320x180:r=30:d=1", "-f", "lavfi", "-i", "color=c=0xffff00:s=320x180:r=30:d=1",
+                           "-filter_complex", "[0][1][2][3]concat=n=4:v=1:a=0,format=yuv420p", "-c:v", "libx264", "-g", "15", colors}));
+        Project p;
+        const MediaItem item = *p.mediaById(p.importFile(colors));
+        Timeline tl = Timeline::makeDefault();
+        tl.width = 320;
+        tl.height = 180;
+        ops::placeClips(tl, ops::makeClips(item, 0, 4, 0), 0, 0, false);
+        ops::setSpeed(tl, {tl.video[0].clips[0].id}, 2.0, true);              // 4 s of footage in 2 s
+        DecoderPool pool;
+        Renderer rend(&pool);
+        auto at = [&](double t) { return centerColor(rend.render(tl, t, QSize(320, 180))); };
+        QColor c1 = at(0.25), c2 = at(0.75), c3 = at(1.25), c4 = at(1.75);   // footage 0.5 s, 1.5 s, 2.5 s, 3.5 s
+        QVERIFY2(c1.red() > 200 && c1.green() < 70 && c1.blue() < 70, qPrintable(c1.name()));
+        QVERIFY2(c2.green() > 200 && c2.red() < 70 && c2.blue() < 70, qPrintable(c2.name()));
+        QVERIFY2(c3.blue() > 200 && c3.red() < 70 && c3.green() < 70, qPrintable(c3.name()));
+        QVERIFY2(c4.red() > 200 && c4.green() > 200 && c4.blue() < 90, qPrintable(c4.name()));
+        QCOMPARE(at(2.5), QColor(Qt::black));                                  // after the (shorter) clip
+        // slow motion: half speed shows each colour twice as long
+        Timeline slow = tl;
+        ops::setSpeed(slow, {slow.video[0].clips[0].id}, 0.5, true);           // now 8 s long
+        QColor s1 = centerColor(rend.render(slow, 1.5, QSize(320, 180))), s2 = centerColor(rend.render(slow, 2.5, QSize(320, 180)));
+        QVERIFY2(s1.red() > 200 && s1.green() < 70, qPrintable(s1.name()));   // footage 0.75 s
+        QVERIFY2(s2.green() > 200 && s2.red() < 70, qPrintable(s2.name()));   // footage 1.25 s
+    }
+
+    void speedChangesTheSoundTimingAndPitch() {
+        const QString wav = dir.filePath("tone_half.wav");                     // 2 s of 1 kHz, then 2 s of silence
+        QVERIFY(runFfmpeg({"-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=2", "-f", "lavfi", "-i",
+                           "anullsrc=r=48000:cl=mono:d=2", "-filter_complex", "[0][1]concat=n=2:v=0:a=1,volume=4", "-ar", "48000", wav}));
+        Project p;
+        const MediaItem item = *p.mediaById(p.importFile(wav));
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(item, 0, 4, 0), 0, 0, false);
+        ops::setSpeed(tl, {tl.audio[0].clips[0].id}, 2.0, true);               // 2 s long: 1 s of tone, 1 s of silence
+        QVERIFY(std::abs(tl.duration() - 2.0) < 1e-6);
+        DecoderPool pool;
+        AudioMixer mixer(&pool);
+        std::vector<float> buf(4800 * 2);
+        mixer.render(tl, 24000, 4800, buf.data());                             // 0.5 s .. 0.6 s: tone, one octave higher
+        float peak = 0;
+        int crossings = 0;
+        for (int i = 0; i < 4800; ++i) {
+            peak = std::max(peak, std::fabs(buf[size_t(2 * i)]));
+            if (i && (buf[size_t(2 * i)] >= 0) != (buf[size_t(2 * (i - 1))] >= 0)) ++crossings;
+        }
+        QVERIFY2(peak > 0.1f, qPrintable(QString::number(peak)));
+        QVERIFY2(crossings > 340 && crossings < 460, qPrintable(QString::number(crossings)));   // 2 kHz -> ~400 crossings per 0.1 s
+        mixer.render(tl, 72000, 4800, buf.data());                             // 1.5 s: the silent half
+        float quiet = 0;
+        for (float v : buf) quiet = std::max(quiet, std::fabs(v));
+        QVERIFY2(quiet < 0.001f, qPrintable(QString::number(quiet)));
+        // continuous playback across block borders (no seek glitches): consecutive blocks join smoothly
+        std::vector<float> a(4800 * 2), b(4800 * 2);
+        DecoderPool pool2;
+        AudioMixer m2(&pool2);
+        m2.render(tl, 9600, 4800, a.data());
+        m2.render(tl, 14400, 4800, b.data());
+        QVERIFY(std::fabs(a[size_t(2 * 4799)] - b[0]) < 0.45f);
+    }
+
     // ------------------------------------------------------------------ export
     void exportsPlayableMp4() {
         const QString ff = Exporter::findFfmpeg();

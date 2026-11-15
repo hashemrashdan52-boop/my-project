@@ -25,6 +25,10 @@ public:
     void close();
     bool isOpen() const { return m_fmt != nullptr; }
     double duration() const { return m_duration; }
+    // Plays the file faster / slower (varispeed: the pitch follows). After this, read() positions are in
+    // *playback* seconds: playback time t shows source time t * speed.
+    void setSpeed(double speed);
+    double speed() const { return m_speed; }
 
     // Fills `frames` stereo frames (2*frames floats) starting at source time t.
     // Anything outside the file is silence.
@@ -32,6 +36,7 @@ public:
 
 private:
     bool decodeOne();
+    bool initResampler();
     void seekTo(qint64 sample);
 
     AVFormatContext* m_fmt = nullptr;
@@ -42,6 +47,7 @@ private:
     int m_stream = -1;
     double m_timeBase = 0, m_startTime = 0, m_duration = 0;
     bool m_eof = false, m_draining = false;
+    double m_speed = 1.0;
 
     std::vector<float> m_fifo;  // interleaved stereo
     qint64 m_fifoStart = 0;     // sample index of m_fifo[0]

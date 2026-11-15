@@ -42,18 +42,7 @@ bool AudioDecoder::open(const QString& path) {
     if (!m_ctx || avcodec_parameters_to_context(m_ctx, st->codecpar) < 0) { close(); return false; }
     if (avcodec_open2(m_ctx, codec, nullptr) < 0) { close(); return false; }
 
-    AVChannelLayout in{};
-    if (m_ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || m_ctx->ch_layout.nb_channels == 0)
-        av_channel_layout_default(&in, std::max(1, m_ctx->ch_layout.nb_channels ? m_ctx->ch_layout.nb_channels : 2));
-    else
-        av_channel_layout_copy(&in, &m_ctx->ch_layout);
-    AVChannelLayout out{};
-    av_channel_layout_default(&out, 2);
-    const int r = swr_alloc_set_opts2(&m_swr, &out, AV_SAMPLE_FMT_FLT, kRate, &in, m_ctx->sample_fmt,
-                                      m_ctx->sample_rate, 0, nullptr);
-    av_channel_layout_uninit(&in);
-    av_channel_layout_uninit(&out);
-    if (r < 0 || !m_swr || swr_init(m_swr) < 0) { close(); return false; }
+    if (!initResampler()) { close(); return false; }
 
     m_pkt = av_packet_alloc();
     m_frame = av_frame_alloc();
@@ -64,8 +53,36 @@ bool AudioDecoder::open(const QString& path) {
     return true;
 }
 
+bool AudioDecoder::initResampler() {
+    if (m_swr) swr_free(&m_swr);
+    AVChannelLayout in{};
+    if (m_ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || m_ctx->ch_layout.nb_channels == 0)
+        av_channel_layout_default(&in, std::max(1, m_ctx->ch_layout.nb_channels ? m_ctx->ch_layout.nb_channels : 2));
+    else
+        av_channel_layout_copy(&in, &m_ctx->ch_layout);
+    AVChannelLayout out{};
+    av_channel_layout_default(&out, 2);
+    // speed: tell the resampler the file is recorded at a different rate, it then plays it faster / slower
+    const int inRate = std::max(1000, int(std::lround(double(m_ctx->sample_rate) * m_speed)));
+    const int r = swr_alloc_set_opts2(&m_swr, &out, AV_SAMPLE_FMT_FLT, kRate, &in, m_ctx->sample_fmt, inRate, 0, nullptr);
+    av_channel_layout_uninit(&in);
+    av_channel_layout_uninit(&out);
+    return r >= 0 && m_swr && swr_init(m_swr) >= 0;
+}
+
+void AudioDecoder::setSpeed(double speed) {
+    speed = std::max(0.05, std::min(speed, 20.0));
+    if (std::abs(speed - m_speed) < 1e-9) return;
+    m_speed = speed;
+    if (!isOpen()) return;
+    initResampler();
+    m_fifo.clear();
+    m_haveStart = false;
+    m_positioned = false;
+}
+
 void AudioDecoder::seekTo(qint64 sample) {
-    const double t = double(sample) / kRate;
+    const double t = double(sample) / kRate * m_speed;
     const int64_t ts = int64_t((t + m_startTime) / m_timeBase);
     if (av_seek_frame(m_fmt, m_stream, ts, AVSEEK_FLAG_BACKWARD) < 0)
         avformat_seek_file(m_fmt, m_stream, INT64_MIN, ts, ts, 0);
@@ -95,7 +112,7 @@ bool AudioDecoder::decodeOne() {
                     int64_t ts = m_frame->best_effort_timestamp;
                     if (ts != AV_NOPTS_VALUE) {
                         const double sec = double(ts) * m_timeBase - m_startTime;
-                        m_fifoStart = std::llround(sec * kRate);
+                        m_fifoStart = std::llround(sec / m_speed * kRate);
                     }
                     m_haveStart = true;
                 }

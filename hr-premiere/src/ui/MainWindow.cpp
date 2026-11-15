@@ -357,6 +357,7 @@ void MainWindow::buildMenus() {
     clip->addSeparator();
     addAction(clip, "Link / Unlink", QKeySequence("Ctrl+L"), [this] { toggleLink(); });
     addAction(clip, "Enable / Disable Clip", QKeySequence("Shift+E"), [this] { toggleClipEnabled(); });
+    addAction(clip, "Speed / Duration…", QKeySequence("Ctrl+R"), [this] { changeSpeed(); });
     clip->addSeparator();
     addAction(clip, "Fade In (1 s)", QKeySequence(), [this] { setFade(true); });
     addAction(clip, "Fade Out (1 s)", QKeySequence(), [this] { setFade(false); });
@@ -949,6 +950,28 @@ void MainWindow::toggleClipEnabled() {
     });
 }
 
+void MainWindow::changeSpeed() {
+    const QSet<QString> sel = m_project.selection();
+    const Clip* first = nullptr;
+    for (const QString& id : sel) {
+        const Clip* c = m_project.timeline().clip(id);
+        if (c && c->kind == ClipKind::Media && c->mediaKind != MediaKind::Image && (!first || c->start < first->start)) first = c;
+    }
+    if (!first) {
+        setStatus("Select a video or audio clip first, then Clip > Speed / Duration (Ctrl+R)");
+        return;
+    }
+    // copy what is needed first: the dialog runs its own event loop, so `first` must not be used afterwards
+    const double currentSpeed = first->speed;
+    SpeedDialog dlg(currentSpeed * 100.0, first->duration, m_project.timeline().fps, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (std::abs(dlg.speed() - currentSpeed) < 1e-6) return;
+    const double speed = dlg.speed();
+    const bool ripple = dlg.ripple();
+    m_project.edit("Speed / Duration", [&](Timeline& tl) { ops::setSpeed(tl, sel, speed, ripple); });
+    setStatus(QString("Speed set to %1 %").arg(int(std::lround(speed * 100))));
+}
+
 void MainWindow::removeEffectsFromSelection() {
     const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
@@ -1093,6 +1116,7 @@ void MainWindow::showClipMenu(const QPoint& pos, const QString& clipId) {
     const bool linked = !c->linkId.isEmpty() && ops::linkedIds(m_project.timeline(), clipId).size() > 1;
     menu.addAction(linked ? "Unlink" : "Link", [this] { toggleLink(); });
     menu.addAction(c->enabled ? "Disable Clip" : "Enable Clip", [this] { toggleClipEnabled(); });
+    menu.addAction("Speed / Duration…", [this] { changeSpeed(); });
     menu.addSeparator();
     menu.addAction("Fade In (1 s)", [this] { setFade(true); });
     menu.addAction("Fade Out (1 s)", [this] { setFade(false); });

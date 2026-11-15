@@ -1,5 +1,6 @@
 // UI tests: drive the real main window (offscreen) with synthetic mouse / keyboard events.
 #include "core/EditOps.h"
+#include "core/Util.h"
 #include "engine/Exporter.h"
 #include "ui/AiPanel.h"
 #include "ui/Dialogs.h"
@@ -13,10 +14,14 @@
 #include <QApplication>
 #include <QDoubleSpinBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest>
+#include <functional>
+#include <memory>
 
 using namespace hr;
 
@@ -69,6 +74,18 @@ class UiTests : public QObject {
     TimelineWidget* tl() { return w->timeline(); }
     QPoint at(const QRectF& r, double fx, double fy) { return QPoint(int(r.left() + r.width() * fx), int(r.top() + r.height() * fy)); }
     void settle() { QCoreApplication::processEvents(); }
+    // A shortcut that opens a modal dialog blocks inside exec(), so something has to answer the dialog from outside.
+    void answerModalDialog(const std::function<void(QDialog*)>& fn, int tries = 100) {
+        QTimer::singleShot(30, this, [this, fn, tries] {
+            if (auto* d = qobject_cast<QDialog*>(QApplication::activeModalWidget())) fn(d);
+            else if (tries > 0) answerModalDialog(fn, tries - 1);
+        });
+    }
+    // After a modal dialog closes a real desktop gives the focus back to the main window; the offscreen platform does not.
+    void activateMainWindow() {
+        w->activateWindow();
+        QTRY_VERIFY(QApplication::activeWindow() == w);
+    }
     void resetTimeline() {
         proj()->clear();
         proj()->undoStack()->clear();
@@ -605,6 +622,66 @@ private slots:
         panel->detectScenes(true);                                     // then cut
         QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy(), 20000);
         QTRY_COMPARE_WITH_TIMEOUT(proj()->timeline().video[0].clips.size(), 3, 5000);
+    }
+
+    // ------------------------------------------------------------------ speed / duration
+    void speedDialogKeepsSpeedAndDurationInStep() {
+        SpeedDialog dlg(100.0, 4.0, 30.0);
+        QVERIFY(std::abs(dlg.speed() - 1.0) < 1e-9);
+        QVERIFY(dlg.ripple());
+        dlg.setSpeedPercent(200.0);                                   // twice as fast -> half as long
+        QVERIFY2(std::abs(parseTimecode(dlg.durationText(), 30.0) - 2.0) < 0.04, qPrintable(dlg.durationText()));
+        auto* edit = dlg.findChild<QLineEdit*>("speedDuration");
+        QVERIFY(edit);
+        edit->setText(formatTimecode(8.0, 30.0));                     // typing a longer duration slows the clip down
+        emit edit->editingFinished();
+        QVERIFY2(std::abs(dlg.speed() - 0.5) < 0.01, qPrintable(QString::number(dlg.speed())));
+    }
+
+    void ctrlRChangesTheSpeedOfPictureAndSoundTogether() {
+        load();                                                       // red.mp4 0..4 s (picture + sound), blue.mp4 4..6 s
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(red0.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, at(r, 0.5, 0.6)); // selects the picture and its linked sound
+        QCOMPARE(proj()->selection().size(), 2);
+        const int undoBefore = proj()->undoStack()->index();
+        activateMainWindow();                                         // earlier tests open dialogs, which leaves nothing active
+
+        // cancelling changes nothing (and the dialog really did open: the answering helper says so)
+        auto cancelled = std::make_shared<bool>(false);
+        answerModalDialog([cancelled](QDialog* d) {
+            *cancelled = dynamic_cast<SpeedDialog*>(d) != nullptr;
+            if (auto* s = dynamic_cast<SpeedDialog*>(d)) s->setSpeedPercent(300.0);
+            d->reject();
+        });
+        QTest::keyClick(w, Qt::Key_R, Qt::ControlModifier);
+        QVERIFY2(*cancelled, "Ctrl+R should open the Speed / Duration dialog");
+        QCOMPARE(proj()->undoStack()->index(), undoBefore);
+        QVERIFY(std::abs(proj()->timeline().duration() - 6.0) < 0.1);
+        activateMainWindow();                                         // the offscreen platform has no window manager to do it
+
+        // 200 %: the clip plays twice as fast, so it is half as long, and the clips behind it close the gap
+        auto accepted = std::make_shared<bool>(false);
+        answerModalDialog([accepted](QDialog* d) {
+            auto* s = dynamic_cast<SpeedDialog*>(d);
+            *accepted = s != nullptr;
+            if (s) s->setSpeedPercent(200.0);
+            d->accept();
+        });
+        QTest::keyClick(w, Qt::Key_R, Qt::ControlModifier);
+        QVERIFY2(*accepted, "Ctrl+R should open the Speed / Duration dialog the second time too");
+        const Clip v = proj()->timeline().video[0].clips[0];
+        const Clip a = proj()->timeline().audio[0].clips[0];
+        QVERIFY2(std::abs(v.speed - 2.0) < 1e-6 && std::abs(a.speed - 2.0) < 1e-6, "picture and sound must change together");
+        QVERIFY2(std::abs(v.duration - 2.0) < 0.05 && std::abs(a.duration - 2.0) < 0.05,
+                 qPrintable(QString("%1 / %2").arg(v.duration).arg(a.duration)));
+        QVERIFY2(std::abs(proj()->timeline().video[0].clips[1].start - 2.0) < 0.05, "the next clip should have moved up (ripple)");
+        QVERIFY(std::abs(proj()->timeline().duration() - 4.0) < 0.1);
+
+        // one undo step brings the original back
+        proj()->undoStack()->undo();
+        QVERIFY(std::abs(proj()->timeline().video[0].clips[0].speed - 1.0) < 1e-6);
+        QVERIFY(std::abs(proj()->timeline().duration() - 6.0) < 0.1);
     }
 
     void rendersSensibleScreenshot() {

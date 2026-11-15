@@ -30,7 +30,8 @@ void AudioMixer::render(const Timeline& tl, qint64 startSample, int frames, floa
             AudioDecoder* dec = m_pool->audio(c.path + "#a" + QString::number(ti), c.path);
             if (!dec) continue;
 
-            const double srcT = c.srcIn + double(s0 - cs) / kRate;
+            dec->setSpeed(c.speed);
+            const double srcT = c.srcIn / c.speed + double(s0 - cs) / kRate;   // playback seconds of the file
             m_tmp.resize(size_t(n) * 2);
             dec->read(srcT, m_tmp.data(), n);
 

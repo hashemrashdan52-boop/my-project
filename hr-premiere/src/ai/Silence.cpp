@@ -32,10 +32,11 @@ QVector<TimeRange> findSilences(const Timeline& tl, const PeaksProvider& peaks, 
                 continue;
             }
             for (int b = b0; b <= b1; ++b) {
-                const double srcT = c.srcIn + (double(b) / 100.0 - c.start);
-                const int idx = int(std::floor(srcT * 100.0));
+                const double srcT = c.srcIn + (double(b) / 100.0 - c.start) * c.speed;
+                const int i0 = int(std::floor(srcT * 100.0));
+                const int i1 = std::max(i0, int(std::floor((srcT + c.speed / 100.0) * 100.0)) - 1);   // fast clips cover several bins
                 float v = 0;
-                if (idx >= 0 && idx < pk->size()) v = float((*pk)[idx]) / 255.0f * float(gain);
+                for (int i = std::max(0, i0); i <= i1 && i < pk->size(); ++i) v = std::max(v, float((*pk)[i]) / 255.0f * float(gain));
                 covered[size_t(b)] = 1;
                 level[size_t(b)] = std::max(level[size_t(b)], v);
             }

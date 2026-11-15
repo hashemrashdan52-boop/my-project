@@ -89,13 +89,13 @@ QVector<TimelineSegment> transcriptOnTimeline(const Timeline& tl, const QVector<
             if (!c.enabled || c.kind != ClipKind::Media || c.mediaId.isEmpty()) continue;
             const MediaItem* m = byId.value(c.mediaId, nullptr);
             if (!m || m->transcript.isEmpty()) continue;
-            const double in = c.srcIn, outT = c.srcIn + c.duration;
+            const double in = c.srcIn, outT = c.srcIn + c.duration * c.speed;
             for (const TranscriptSegment& s : m->transcript) {
                 const double a = std::max(s.start, in), b = std::min(s.end, outT);
                 if (b - a < 0.05) continue;
                 TimelineSegment ts;
-                ts.start = c.start + (a - in);
-                ts.end = c.start + (b - in);
+                ts.start = c.start + (a - in) / c.speed;
+                ts.end = c.start + (b - in) / c.speed;
                 ts.text = s.text;
                 ts.clipId = c.id;
                 ts.mediaId = c.mediaId;

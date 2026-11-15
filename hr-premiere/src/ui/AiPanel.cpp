@@ -643,7 +643,8 @@ void AiPanel::applyScenes() {
             if (c.kind != ClipKind::Media || !m_sceneResults.contains(c.mediaId)) continue;
             if (!sel.isEmpty() && !sel.contains(c.id)) continue;
             for (double t : m_sceneResults.value(c.mediaId))
-                if (t > c.srcIn + 0.05 && t < c.srcIn + c.duration - 0.05) times.push_back(snapToFrame(c.start + (t - c.srcIn), tl.fps));
+                if (t > c.srcIn + 0.05 && t < c.srcIn + c.duration * c.speed - 0.05)
+                    times.push_back(snapToFrame(c.start + (t - c.srcIn) / c.speed, tl.fps));
         }
     std::sort(times.begin(), times.end());
     times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return std::abs(a - b) < 1e-6; }), times.end());

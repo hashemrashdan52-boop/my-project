@@ -3,7 +3,9 @@
 #include "engine/Exporter.h"
 #include "ui/ParticleField.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QTimer>
@@ -60,6 +62,23 @@ public:
 private:
     QSpinBox *m_w, *m_h;
     QComboBox *m_preset, *m_fps;
+};
+
+// Clip > Speed/Duration (Ctrl+R)
+class SpeedDialog : public QDialog {
+public:
+    SpeedDialog(double speedPercent, double durationSeconds, double fps, QWidget* parent = nullptr);
+    double speed() const { return m_speed->value() / 100.0; }   // 1.0 = normal
+    bool ripple() const { return m_ripple->isChecked(); }
+    QString durationText() const { return m_dur->text(); }
+    void setSpeedPercent(double p) { m_speed->setValue(p); }
+
+private:
+    QDoubleSpinBox* m_speed;
+    QLineEdit* m_dur;
+    QCheckBox* m_ripple;
+    double m_span;   // seconds of footage the clip plays (kept when the speed changes)
+    double m_fps;
 };
 
 class AboutDialog : public QDialog {

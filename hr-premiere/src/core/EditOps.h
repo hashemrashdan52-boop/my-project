@@ -43,6 +43,11 @@ Timeline moved(const Timeline& base, const QSet<QString>& ids, double dt, int dT
 double clampTrimDelta(const Timeline& tl, const QSet<QString>& ids, bool leftEdge, double delta, bool ripple = false);
 double trim(Timeline& tl, const QSet<QString>& ids, bool leftEdge, double delta, bool ripple = false);
 
+// Changes the speed of footage clips (picture and linked sound together): 1.0 = normal, 2.0 = twice as fast.
+// With ripple the clips behind move to follow the new length, otherwise a longer clip overwrites them.
+// Returns the number of clips changed.
+int setSpeed(Timeline& tl, const QSet<QString>& ids, double speed, bool ripple);
+
 // Clips (video + linked audio) for a media item, ready to be placed at `start`.
 QVector<Clip> makeClips(const MediaItem& m, double srcIn, double dur, double start);
 Clip makeTitle(double start, double dur, const QString& text);

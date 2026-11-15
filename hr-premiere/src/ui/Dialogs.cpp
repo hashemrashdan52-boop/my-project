@@ -291,6 +291,59 @@ SequenceDialog::SequenceDialog(const Timeline& tl, QWidget* parent) : QDialog(pa
     lay->addWidget(bb);
 }
 
+// ===================================================================== Speed
+SpeedDialog::SpeedDialog(double speedPercent, double durationSeconds, double fps, QWidget* parent)
+    : QDialog(parent), m_span(durationSeconds * speedPercent / 100.0), m_fps(fps) {
+    setWindowTitle("Clip Speed / Duration");
+    setMinimumWidth(380);
+    m_speed = new QDoubleSpinBox;
+    m_speed->setRange(5, 2000);
+    m_speed->setDecimals(1);
+    m_speed->setSingleStep(5);
+    m_speed->setSuffix(" %");
+    m_speed->setValue(speedPercent);
+    m_dur = new QLineEdit(formatTimecode(durationSeconds, fps));
+    m_dur->setObjectName("speedDuration");
+    m_dur->setToolTip("Type a new duration (HH:MM:SS:FF) and the speed follows");
+    m_ripple = new QCheckBox("Ripple edit, shifting trailing clips");
+    m_ripple->setChecked(true);
+
+    auto syncDuration = [this](double pct) {
+        QSignalBlocker b(m_dur);
+        m_dur->setText(formatTimecode(m_span / (pct / 100.0), m_fps));
+    };
+    connect(m_speed, &QDoubleSpinBox::valueChanged, this, syncDuration);
+    connect(m_dur, &QLineEdit::editingFinished, this, [this] {
+        bool ok = false;
+        const double d = parseTimecode(m_dur->text(), m_fps, &ok);
+        if (ok && d > 0.05) m_speed->setValue(std::max(5.0, std::min(2000.0, m_span / d * 100.0)));
+    });
+
+    auto* form = new QFormLayout;
+    form->setVerticalSpacing(10);
+    form->setHorizontalSpacing(16);
+    form->addRow("Speed", m_speed);
+    form->addRow("Duration", m_dur);
+    auto* hint = new QLabel("100 % is normal speed. Above 100 % is fast motion, below is slow motion. "
+                            "The sound changes with the picture.");
+    hint->setWordWrap(true);
+    hint->setObjectName("dim");
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    bb->button(QDialogButtonBox::Ok)->setObjectName("primary");
+    connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(20, 18, 20, 18);
+    lay->setSpacing(12);
+    auto* title = new QLabel("Clip Speed / Duration");
+    title->setStyleSheet("font-size:16px; font-weight:700;");
+    lay->addWidget(title);
+    lay->addLayout(form);
+    lay->addWidget(m_ripple);
+    lay->addWidget(hint);
+    lay->addWidget(bb);
+}
+
 // ===================================================================== About
 AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle("About HR Premiere");
@@ -480,6 +533,7 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent) : QDialog(parent) {
         {"Delete", "Delete selected clips"}, {"Shift + Delete", "Ripple delete"},
         {"Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"}, {"Ctrl + C / X / V", "Copy / cut / paste clips"},
         {"Ctrl + A", "Select all clips"}, {"Ctrl + L", "Link / unlink selected clips"},
+        {"Ctrl + R", "Clip speed / duration (slow or fast motion)"}, {"Ctrl + Shift + R", "Record a voice-over (microphone)"},
         {"I / O", "Mark In / Mark Out"}, {"Ctrl + Shift + X", "Clear In and Out"}, {"M", "Add marker"},
         {"S", "Toggle snapping"}, {"+ / -", "Zoom timeline in / out"}, {"\\", "Zoom timeline to fit"},
         {",  /  .", "Insert / overwrite from Source monitor"},

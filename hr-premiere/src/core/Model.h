@@ -52,6 +52,7 @@ struct Clip {
     double duration = 0;     // length on the timeline (s)
     double srcIn = 0;        // in-point inside the source (s)
     double sourceLength = 0; // total source length, 0 = unbounded (stills, titles)
+    double speed = 1.0;      // source seconds played per timeline second (2 = twice as fast, 0.5 = slow motion)
     bool enabled = true;
     QVector<EffectInstance> effects;
 
