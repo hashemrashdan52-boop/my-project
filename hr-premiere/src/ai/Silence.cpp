@@ -72,7 +72,7 @@ AudioStats measureAudio(const LevelMap& map) {
     std::sort(v.begin(), v.end());
     auto pct = [&](double p) { return toDb(v[std::min(v.size() - 1, size_t(p * double(v.size() - 1) + 0.5))]); };
     s.valid = true;
-    s.noiseFloorDb = pct(0.15);
+    s.noiseFloorDb = pct(0.05);       // the quietest 5 %: speech with hardly any pauses still has dips down to the noise
     s.speechDb = pct(0.90);
     s.seconds = double(v.size()) / 100.0;
     return s;

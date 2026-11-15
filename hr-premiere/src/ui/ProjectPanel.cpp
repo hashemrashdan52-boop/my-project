@@ -275,7 +275,7 @@ void ProjectPanel::applyFilter() {
         it->setHidden(!show);
         if (show) ++visible;
     }
-    m_count->setText(QString(TR("%1 item%2")).arg(visible).arg(visible == 1 ? "" : "s"));
+    m_count->setText(QString(TR("%1 item(s)")).arg(visible));
 }
 
 void ProjectPanel::setIconMode(bool icons) {

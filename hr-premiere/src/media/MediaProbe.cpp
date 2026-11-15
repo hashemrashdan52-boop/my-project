@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "MediaProbe.h"
 
 #include <QFileInfo>
@@ -20,7 +21,7 @@ bool isStillImagePath(const QString& path) {
 
 bool probeMedia(const QString& path, MediaItem& item, QString* error) {
     if (!QFileInfo::exists(path)) {
-        if (error) *error = "File not found";
+        if (error) *error = TR("File not found");
         return false;
     }
     item.path = path;
@@ -45,12 +46,12 @@ bool probeMedia(const QString& path, MediaItem& item, QString* error) {
     AVFormatContext* fmt = nullptr;
     int r = avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr);
     if (r < 0) {
-        if (error) *error = "Unsupported or corrupt file";
+        if (error) *error = TR("Unsupported or corrupt file");
         return false;
     }
     if (avformat_find_stream_info(fmt, nullptr) < 0) {
         avformat_close_input(&fmt);
-        if (error) *error = "Could not read the file's streams";
+        if (error) *error = TR("Could not read the file's streams");
         return false;
     }
     int vIdx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
@@ -61,7 +62,7 @@ bool probeMedia(const QString& path, MediaItem& item, QString* error) {
     item.hasAudio = aIdx >= 0;
     if (!item.hasVideo && !item.hasAudio) {
         avformat_close_input(&fmt);
-        if (error) *error = "No audio or video found in this file";
+        if (error) *error = TR("No audio or video found in this file");
         return false;
     }
     if (fmt->duration > 0) item.duration = double(fmt->duration) / AV_TIME_BASE;
@@ -104,7 +105,7 @@ bool probeMedia(const QString& path, MediaItem& item, QString* error) {
     }
     avformat_close_input(&fmt);
     if (item.duration <= 0) {
-        if (error) *error = "Could not determine the duration of this file";
+        if (error) *error = TR("Could not determine the duration of this file");
         return false;
     }
     return true;

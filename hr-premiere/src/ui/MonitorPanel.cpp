@@ -54,6 +54,7 @@ void VideoView::resizeEvent(QResizeEvent*) { emit resized(); }
 
 void VideoView::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    p.setLayoutDirection(Qt::LeftToRight);   // painted LTR also in the Arabic version
     p.fillRect(rect(), theme::bg1);
     const QRectF r = pictureRect();
     p.fillRect(r, Qt::black);
@@ -87,6 +88,7 @@ void MiniScrubber::mouseMoveEvent(QMouseEvent* e) {
 }
 void MiniScrubber::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    p.setLayoutDirection(Qt::LeftToRight);   // painted LTR also in the Arabic version
     p.setRenderHint(QPainter::Antialiasing, true);
     const double w = width() - 16;
     const QRectF bar(8, height() / 2.0 - 2, w, 4);

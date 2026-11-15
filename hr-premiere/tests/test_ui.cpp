@@ -1,5 +1,7 @@
 // UI tests: drive the real main window (offscreen) with synthetic mouse / keyboard events.
+#include "ai/ChatParser.h"
 #include "core/EditOps.h"
+#include "core/I18n.h"
 #include "core/Util.h"
 #include "engine/Exporter.h"
 #include "ui/AiPanel.h"
@@ -12,11 +14,16 @@
 #include "ui/Theme.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMimeData>
 #include <QProcess>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
@@ -95,6 +102,27 @@ class UiTests : public QObject {
         resetTimeline();
         w->autoPlace({red, blue});  // red 0..4 (with audio), blue 4..6 (video only)
         settle();
+    }
+
+    int titleCount() {
+        int n = 0;
+        for (const Track& t : proj()->timeline().video)
+            for (const Clip& c : t.clips) n += c.kind == ClipKind::Title;
+        return n;
+    }
+    QStringList captionTexts() {
+        QStringList out;
+        for (const Track& t : proj()->timeline().video)
+            for (const Clip& c : t.clips)
+                if (c.kind == ClipKind::Title) out << c.effect("text")->text("text");
+        return out;
+    }
+    // red.mp4 (4 s with sound) + blue.mp4 (2 s) with the given sentences "recognised" on the first one
+    QString loadWithSentences(const QVector<TranscriptSegment>& sentences, const QString& lang) {
+        load();
+        const QString mediaId = proj()->timeline().audio[0].clips[0].mediaId;
+        proj()->setTranscript(mediaId, sentences, lang, "small");
+        return mediaId;
     }
 
 private slots:
@@ -622,6 +650,241 @@ private slots:
         panel->detectScenes(true);                                     // then cut
         QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy(), 20000);
         QTRY_COMPARE_WITH_TIMEOUT(proj()->timeline().video[0].clips.size(), 3, 5000);
+    }
+
+    // ------------------------------------------------------------------ AI chat, text corrections, languages, colours
+    void chatDoesAFullEditAndTakesItBack() {
+        FakeSpeechEnv env;
+        load();                                                        // red.mp4 (4 s with sound) + blue.mp4 (2 s)
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const double before = proj()->timeline().duration();
+        const int clipsBefore = proj()->timeline().video[0].clips.size();
+        const int undoBefore = proj()->undoStack()->index();
+        const int talked = panel->chat()->messageCount();
+        panel->sendChat("full edit");                                  // nothing was listened to yet: it listens first, then edits
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->isBusy() && titleCount() >= 3, 30000);
+        QVERIFY(proj()->undoStack()->index() > undoBefore);
+        QVERIFY2(panel->chat()->messageCount() >= talked + 3, "what I said, what it is doing, what it did");
+        QVERIFY(!panel->chat()->lastBotText().isEmpty());
+        panel->sendChat("undo");                                       // the whole edit is one step
+        QCOMPARE(titleCount(), 0);
+        QVERIFY(std::abs(proj()->timeline().duration() - before) < 1e-6);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), clipsBefore);
+        QVERIFY(panel->chat()->lastBotText().startsWith("Undone"));
+    }
+
+    void chatReplacesAWordInTheTextAndInTheCaptions() {
+        const QString mediaId = loadWithSentences({{0.5, 1.5, "first sentence"}, {2.0, 3.0, "second sentence"}, {3.2, 3.9, "third sentence"}}, "en");
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        QTRY_COMPARE(panel->sentenceCount(), 3);
+        panel->sendChat("add captions");
+        QCOMPARE(titleCount(), 3);
+        panel->sendChat("change the word sentence to phrase");
+        for (const TranscriptSegment& s : proj()->mediaById(mediaId)->transcript) {
+            QVERIFY2(s.text.contains("phrase") && !s.text.contains("sentence"), qPrintable(s.text));
+            QVERIFY(s.edited);                                         // what the user asked for is trusted from now on
+        }
+        for (const QString& c : captionTexts()) QVERIFY2(c.contains("phrase"), qPrintable(c));
+        panel->sendChat("undo");                                       // one step brings the old word back everywhere
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[1].text, QString("second sentence"));
+        for (const QString& c : captionTexts()) QVERIFY2(c.contains("sentence"), qPrintable(c));
+        panel->sendChat("change sentence 2 to something else entirely");
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[1].text, QString("something else entirely"));
+        QVERIFY(captionTexts().contains("something else entirely"));
+        panel->sendChat("delete every sentence with the word third");
+        QCOMPARE(panel->sentenceCount(), 2);
+    }
+
+    void chatTakesArabicRequestsAndCorrectsTheText() {
+        const QString a = QString::fromUtf8("اهلا بكم في القناة"), b = QString::fromUtf8("اليوم رح نتكلم عن المونتاج");
+        const QString mediaId = loadWithSentences({{0.5, 1.5, a}, {2.0, 3.0, b}}, "ar");
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        QTRY_COMPARE(panel->sentenceCount(), 2);
+        panel->sendChat(QString::fromUtf8("ضيف ترجمة"));                  // add captions
+        QCOMPARE(titleCount(), 2);
+        panel->sendChat(QString::fromUtf8("غيّر كلمة القناة الى الفيديو"));    // change the word القناة to الفيديو
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[0].text, QString::fromUtf8("اهلا بكم في الفيديو"));
+        QVERIFY(captionTexts().contains(QString::fromUtf8("اهلا بكم في الفيديو")));
+        panel->sendChat(QString::fromUtf8("تراجع"));                      // undo
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[0].text, a);
+        // the word is found even when it is typed with another spelling of the final letter
+        panel->sendChat(QString::fromUtf8("غير كلمة القناه الى القناة الجديدة"));
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[0].text, QString::fromUtf8("اهلا بكم في القناة الجديدة"));
+        const double before = proj()->timeline().duration();
+        panel->sendChat(QString::fromUtf8("احذف الجملة 2"));              // delete sentence 2
+        QVERIFY(proj()->timeline().duration() < before - 0.9);
+        QCOMPARE(panel->sentenceCount(), 1);
+    }
+
+    void aSentenceCanBeCorrectedInTheListAndTheCaptionsFollow() {
+        const QString mediaId = loadWithSentences({{0.5, 1.5, "first sentence"}, {2.0, 3.0, "second sentence"}, {3.2, 3.9, "third sentence"}}, "en");
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        QTRY_COMPARE(panel->sentenceCount(), 3);
+        auto* list = panel->findChild<QTreeWidget*>();
+        QVERIFY(list);
+        QCOMPARE(list->topLevelItemCount(), 3);
+        panel->addCaptions(false);
+        QCOMPARE(titleCount(), 3);
+        list->topLevelItem(1)->setText(2, "the corrected words");       // what typing in the list does
+        QTRY_COMPARE(proj()->mediaById(mediaId)->transcript[1].text, QString("the corrected words"));
+        QVERIFY(proj()->mediaById(mediaId)->transcript[1].edited);
+        QVERIFY(captionTexts().contains("the corrected words"));
+        QTRY_COMPARE(list->topLevelItem(1)->text(2).remove(QRegularExpression("[^a-z ]")).trimmed(), QString("the corrected words"));
+        proj()->undoStack()->undo();                                   // Ctrl+Z
+        QCOMPARE(proj()->mediaById(mediaId)->transcript[1].text, QString("second sentence"));
+        QVERIFY(!proj()->mediaById(mediaId)->transcript[1].edited);
+        QVERIFY(!captionTexts().contains("the corrected words"));
+    }
+
+    void everyExampleOfTheHelpIsUnderstoodInBothLanguages() {
+        loadWithSentences({{0.5, 1.5, "first sentence"}}, "en");
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const auto before = i18n::current();
+        for (const auto lang : {i18n::Lang::English, i18n::Lang::Arabic}) {
+            i18n::setCurrent(lang);
+            panel->sendChat(lang == i18n::Lang::English ? "help" : QString::fromUtf8("مساعدة"));
+            QString help = panel->chat()->lastBotText();
+            help.remove(QRegularExpression("\\([^)]*\\)"));            // “(add “fast” or “calm” ...)” are only parts of requests
+            QRegularExpression quoted(QString::fromUtf8("[“«]([^”»]+)[”»]"));
+            auto it = quoted.globalMatch(help);
+            int n = 0;
+            while (it.hasNext()) {
+                QString example = it.next().captured(1);
+                example.replace(QString::fromUtf8("…"), lang == i18n::Lang::English ? "hello" : QString::fromUtf8("مرحبا"));
+                ++n;
+                const ai::Command c = ai::parseChat(example);
+                QVERIFY2(c.intent != ai::Intent::Unknown, qPrintable(example));
+                // the examples that name a word or a sentence must really be read that way
+                if (c.intent == ai::Intent::ReplaceWord) QVERIFY2(!c.from.isEmpty() && !c.to.isEmpty(), qPrintable(example));
+                if (c.intent == ai::Intent::EditSentence) QVERIFY2(c.sentence != 0 && !c.to.isEmpty(), qPrintable(example));
+                if (c.intent == ai::Intent::DeleteSentences) QVERIFY2(c.sentence != 0 || !c.from.isEmpty(), qPrintable(example));
+            }
+            QVERIFY2(n >= 20, qPrintable(QString::number(n)));
+        }
+        i18n::setCurrent(before);
+    }
+
+    void theQuickButtonsOfTheChatSendTheirOwnWords() {
+        FakeSpeechEnv env;
+        load();
+        auto* panel = w->findChild<AiPanel*>();
+        QVERIFY(panel);
+        const int undoBefore = proj()->undoStack()->index();
+        QPushButton* zoom = nullptr;
+        for (auto* b : panel->chat()->findChildren<QPushButton*>())
+            if (b->text() == "Add zoom") zoom = b;
+        QVERIFY(zoom);
+        zoom->click();                                                 // "Add zoom": needs no listening
+        QTRY_VERIFY_WITH_TIMEOUT(proj()->undoStack()->index() > undoBefore && !panel->isBusy(), 20000);
+        QVERIFY(panel->chat()->messageCount() >= 3);
+    }
+
+    void preferencesPreviewTheColoursAndCancelPutsThemBack() {
+        const QString before = theme::currentId();
+        const QColor bgBefore = theme::bg1;
+        QVERIFY(theme::all().size() >= 5);
+        QVERIFY(theme::find(theme::kClassicId));
+        {
+            PreferencesDialog dlg(w);
+            auto* list = dlg.findChild<QListWidget*>();
+            QVERIFY(list);
+            QCOMPARE(list->count(), theme::all().size());
+            int light = -1;
+            for (int i = 0; i < list->count(); ++i)
+                if (!theme::find(list->item(i)->data(Qt::UserRole).toString())->dark) light = i;
+            QVERIFY(light >= 0);
+            list->setCurrentRow(light);                                // the whole program changes at once
+            QVERIFY(!theme::dark);
+            QVERIFY(theme::bg1 != bgBefore);
+            QCOMPARE(theme::currentId(), list->item(light)->data(Qt::UserRole).toString());
+            for (auto* b : dlg.findChildren<QPushButton*>())           // "back to the classic look"
+                if (b->text() == "Back to the classic look") b->click();
+            QCOMPARE(theme::currentId(), QString(theme::kClassicId));
+            dlg.reject();                                              // Cancel: the old colours return
+        }
+        QCOMPARE(theme::currentId(), before);
+        QCOMPARE(theme::bg1, bgBefore);
+        {
+            PreferencesDialog dlg(w);                                  // OK keeps the choice (and remembers it)
+            auto* list = dlg.findChild<QListWidget*>();
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == theme::kClassicId) list->setCurrentRow(i);
+            dlg.accept();
+        }
+        QCOMPARE(theme::currentId(), QString(theme::kClassicId));
+        QCOMPARE(QSettings().value("ui/theme").toString(), QString(theme::kClassicId));
+        theme::use(before);                                            // put things back for the other tests
+        theme::refresh();
+        theme::save();
+        QCOMPARE(theme::bg1, bgBefore);
+    }
+
+    void preferencesOfferBothLanguagesAndCancelChangesNothing() {
+        const QString saved = QSettings().value("language").toString();
+        PreferencesDialog dlg(w);
+        QComboBox* lang = dlg.findChild<QComboBox*>();                 // the only combo box of the page
+        QVERIFY(lang);
+        QCOMPARE(lang->count(), 2);
+        QVERIFY(lang->findData("ar") >= 0 && lang->findData("en") >= 0);
+        QVERIFY(!dlg.languageChanged());
+        const QString other = i18n::code(i18n::current()) == "ar" ? "en" : "ar";
+        lang->setCurrentIndex(lang->findData(other));
+        QVERIFY(dlg.languageChanged());
+        QCOMPARE(dlg.chosenLanguageCode(), other);
+        dlg.reject();
+        QCOMPARE(QSettings().value("language").toString(), saved);
+    }
+
+    void theFirstRunPageGivesTheChosenLanguage() {
+        for (const QString wanted : {"ar", "en"}) {
+            LanguageDialog dlg;
+            QPushButton* choice = nullptr;
+            for (auto* b : dlg.findChildren<QPushButton*>())
+                if ((b->text() == "English") == (wanted == "en")) choice = b;
+            QVERIFY(choice);
+            QTimer::singleShot(0, choice, &QPushButton::click);
+            QCOMPARE(dlg.exec(), int(QDialog::Accepted));
+            QCOMPARE(dlg.code(), wanted);
+        }
+    }
+
+    void theArabicProgramIsMirroredButTheTimelineKeepsItsDirection() {
+        const auto before = i18n::current();
+        i18n::setCurrent(i18n::Lang::Arabic);
+        QApplication::setLayoutDirection(Qt::RightToLeft);
+        {
+            MainWindow arabic(false);
+            arabic.resize(1500, 900);
+            arabic.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&arabic));
+            QCOMPARE(arabic.layoutDirection(), Qt::RightToLeft);
+            QCOMPARE(arabic.timeline()->layoutDirection(), Qt::LeftToRight);   // time runs from left to right, also in Arabic
+            QVERIFY(arabic.windowTitle().contains("HR Premiere"));
+            bool found = false;
+            for (auto* l : arabic.findChildren<QLabel*>())
+                if (l->text() == QString::fromUtf8("مساعد المونتاج")) found = true;
+            QVERIFY2(found, "the assistant's title is in Arabic");
+            auto* panel = arabic.findChild<AiPanel*>();
+            QVERIFY(panel);
+            QVERIFY(panel->chat()->messageCount() >= 1);               // the greeting
+            QVERIFY(panel->chat()->lastBotText().contains(QString::fromUtf8("مونتاج كامل")));
+            // the quick buttons carry words the chat understands
+            int chips = 0;
+            for (auto* b : panel->chat()->findChildren<QPushButton*>()) {
+                const auto intent = ai::parseChat(b->text()).intent;
+                if (b->text() == QString::fromUtf8("إرسال")) continue;
+                ++chips;
+                QVERIFY2(intent != ai::Intent::Unknown, qPrintable(b->text()));
+            }
+            QCOMPARE(chips, 6);
+        }
+        QApplication::setLayoutDirection(Qt::LeftToRight);
+        i18n::setCurrent(before);
     }
 
     // ------------------------------------------------------------------ speed / duration

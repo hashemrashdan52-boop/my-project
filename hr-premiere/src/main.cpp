@@ -1,4 +1,5 @@
 #include "ui/Icons.h"
+#include "ui/AiPanel.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "core/EditOps.h"
@@ -60,7 +61,7 @@ int main(int argc, char** argv) {
     QCommandLineOption size("size", "Window size, e.g. 1500x900.", "WxH");
     QCommandLineOption ws("workspace", "Workspace to start in.", "name");
     QCommandLineOption playFor("play", "Start playback right away (for testing).");
-    QCommandLineOption dialog("dialog", "With --screenshot: capture a dialog (export, sequence, about, shortcuts) instead of the window.", "name");
+    QCommandLineOption dialog("dialog", "With --screenshot: capture a dialog (export, sequence, about, ownership, shortcuts, preferences, language) instead of the window.", "name");
     QCommandLineOption transcribe("transcribe", "Headless speech recognition of <file> (downloads the model if needed).", "file");
     QCommandLineOption model("model", "Speech model for --transcribe: tiny, base, small (default) or turbo.", "id", "small");
     QCommandLineOption language("language", "Spoken language for --transcribe, e.g. ar, en (default: auto).", "code", "auto");
@@ -69,7 +70,8 @@ int main(int argc, char** argv) {
     QCommandLineOption themeOpt("theme", "Colour theme for this run: hr, classic, midnight, ocean, emerald, sunset, rose or light.", "id");
     QCommandLineOption cleanOpt("clean", "Audio clean-up before --transcribe: none, light, strong or auto (default).", "level", "auto");
     QCommandLineOption prefilterOpt("prefilter", "An ffmpeg audio filter chain to run before --transcribe (for experiments).", "filter");
-    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog, transcribe, model, language, outFile, langOpt, themeOpt, cleanOpt, prefilterOpt});
+    QCommandLineOption chatOpt("chat", "Send a request to the AI assistant's chat after the start (can be repeated; for screenshots and scripts).", "text");
+    parser.addOptions({place, demo, shot, delay, size, ws, playFor, dialog, transcribe, model, language, outFile, langOpt, themeOpt, cleanOpt, prefilterOpt, chatOpt});
     parser.process(app);
 
     // colours: what the user chose in Preferences, or --theme for this run only
@@ -137,6 +139,13 @@ int main(int argc, char** argv) {
         window.timeline()->zoomToFit();
         window.program()->seek(1.6);
     }
+    {
+        int at = 200;                                                  // the requests of --chat, one after the other
+        for (const QString& line : parser.values(chatOpt)) {
+            QTimer::singleShot(at, &window, [&window, line] { window.assistant()->sendChat(line); });
+            at += 200;
+        }
+    }
     if (parser.isSet(playFor)) QTimer::singleShot(300, window.program(), &Player::play);
 
     if (screenshotMode) {
@@ -149,6 +158,8 @@ int main(int argc, char** argv) {
             else if (d == "about") dlg = new AboutDialog(&window);
             else if (d == "ownership") dlg = new OwnershipDialog(&window);
             else if (d == "shortcuts") dlg = new ShortcutsDialog(&window);
+            else if (d == "preferences") dlg = new PreferencesDialog(&window);
+            else if (d == "language") dlg = new LanguageDialog(&window);
             if (dlg) dlg->show();
         }
         QTimer::singleShot(parser.value(delay).toInt(), &app, [&window, &app, out, dlg] {

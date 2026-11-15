@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Exporter.h"
 
 #include "AudioMixer.h"
@@ -84,7 +85,7 @@ bool Exporter::renderAudio(const QString& wavPath, double from, double to) {
         mixer.render(m_tl, startSample + done, n, buf.data());
         for (int i = 0; i < n * 2; ++i) pcm[size_t(i)] = int16_t(std::lround(buf[size_t(i)] * 32767.0f));
         f.write(reinterpret_cast<const char*>(pcm.data()), qint64(n) * 4);
-        emit progress(from + (to - from) * double(done + n) / double(total), "Rendering audio…");
+        emit progress(from + (to - from) * double(done + n) / double(total), TR("Rendering audio…"));
     }
     f.close();
     return true;
@@ -93,7 +94,7 @@ bool Exporter::renderAudio(const QString& wavPath, double from, double to) {
 void Exporter::run() {
     const QString ffmpeg = findFfmpeg();
     if (ffmpeg.isEmpty()) {
-        emit exportFinished(false, "ffmpeg was not found. Put ffmpeg next to HRPremiere or add it to your PATH.");
+        emit exportFinished(false, TR("ffmpeg was not found. Put ffmpeg next to HRPremiere or add it to your PATH."));
         return;
     }
     const bool audioOnly = m_s.format == "mp3" || m_s.format == "wav";
@@ -106,13 +107,13 @@ void Exporter::run() {
 
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
-        emit exportFinished(false, "Could not create a temporary folder.");
+        emit exportFinished(false, TR("Could not create a temporary folder."));
         return;
     }
     const QString wav = tmp.filePath("mix.wav");
     if (wantAudio) {
         if (!renderAudio(wav, 0.0, wantVideo ? 0.1 : 0.9)) {
-            emit exportFinished(false, m_cancel ? "Export cancelled." : "Could not render the audio mix.");
+            emit exportFinished(false, m_cancel ? TR("Export cancelled.") : TR("Could not render the audio mix."));
             return;
         }
     }
@@ -157,7 +158,7 @@ void Exporter::run() {
     proc.setProcessChannelMode(QProcess::MergedChannels);
     proc.start(ffmpeg, args);
     if (!proc.waitForStarted(10000)) {
-        emit exportFinished(false, "Could not start ffmpeg: " + proc.errorString());
+        emit exportFinished(false, TR("Could not start ffmpeg: ") + proc.errorString());
         return;
     }
 
@@ -190,7 +191,7 @@ void Exporter::run() {
                 const double frac = base + (1.0 - base) * double(i + 1) / double(frames);
                 const double el = timer.elapsed() / 1000.0;
                 const double eta = i > 0 ? el / double(i) * double(frames - i) : 0.0;
-                emit progress(frac * 0.99, QString("Rendering frame %1 of %2   (about %3 s left)")
+                emit progress(frac * 0.99, QString(TR("Rendering frame %1 of %2   (about %3 s left)"))
                                                .arg(i + 1).arg(frames).arg(int(std::ceil(eta))));
             }
         }
@@ -201,7 +202,7 @@ void Exporter::run() {
         proc.kill();
         proc.waitForFinished(3000);
         QFile::remove(m_s.outputPath);
-        emit exportFinished(false, "Export cancelled.");
+        emit exportFinished(false, TR("Export cancelled."));
         return;
     }
     emit progress(0.995, "Finishing…");
@@ -209,7 +210,7 @@ void Exporter::run() {
     drain();
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
         QFile::remove(m_s.outputPath);
-        emit exportFinished(false, "ffmpeg failed:\n" + log.trimmed());
+        emit exportFinished(false, TR("ffmpeg failed:\n") + log.trimmed());
         return;
     }
     emit progress(1.0, "Done");

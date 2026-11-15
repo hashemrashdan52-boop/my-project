@@ -209,6 +209,7 @@ QSet<QString> TimelineWidget::withLinked(const QSet<QString>& ids) const {
 void TimelineWidget::paintEvent(QPaintEvent*) {
     layoutRows();
     QPainter p(this);
+    p.setLayoutDirection(Qt::LeftToRight);   // painted LTR also in the Arabic version
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), theme::bg1);
 

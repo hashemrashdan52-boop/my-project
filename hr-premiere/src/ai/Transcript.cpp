@@ -289,8 +289,8 @@ QVector<SegmentQuality> assessTranscript(const QVector<TranscriptSegment>& segme
     double noiseDb = -60;
     if (haveSound) {
         std::vector<quint8> v(peaks100->begin(), peaks100->end());
-        std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(v.size() * 15 / 100), v.end());
-        noiseDb = byteToDb(v[v.size() * 15 / 100]);
+        std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(v.size() * 5 / 100), v.end());   // the quietest 5 % = the noise floor
+        noiseDb = byteToDb(v[v.size() * 5 / 100]);
     }
     QString previous;
     for (int i = 0; i < segments.size(); ++i) {

@@ -36,6 +36,7 @@ public:
     Project* project() { return &m_project; }
     TimelineWidget* timeline() { return m_timeline; }
     Player* program() { return m_program; }
+    AiPanel* assistant() { return m_ai; }
 
 protected:
     void closeEvent(QCloseEvent*) override;

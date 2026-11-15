@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Project.h"
 #include "TextUtil.h"
 
@@ -32,7 +33,7 @@ bool TimelineCommand::mergeWith(const QUndoCommand* other) {
 Project::Project(QObject* parent) : QObject(parent) { m_undo.setUndoLimit(200); }
 
 QString Project::name() const {
-    return m_filePath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(m_filePath).completeBaseName();
+    return m_filePath.isEmpty() ? TR("Untitled") : QFileInfo(m_filePath).completeBaseName();
 }
 
 const MediaItem* Project::mediaById(const QString& id) const {
@@ -116,7 +117,7 @@ bool Project::editSentence(const QString& mediaId, int index, const QString& tex
     QVector<TranscriptSegment> after = m->transcript;
     after[index].text = clean;
     after[index].edited = true;
-    m_undo.push(new TranscriptCommand(this, mediaId, m->transcript, after, QStringLiteral("Edit sentence")));
+    m_undo.push(new TranscriptCommand(this, mediaId, m->transcript, after, TR("Edit sentence")));
     return true;
 }
 
@@ -144,8 +145,8 @@ int Project::replaceInTranscripts(const QString& from, const QString& to) {
         if (any) changes.push_back(ch);
     }
     if (changes.isEmpty()) return 0;
-    m_undo.beginMacro(QStringLiteral("Replace word"));
-    for (const Change& ch : changes) m_undo.push(new TranscriptCommand(this, ch.id, ch.before, ch.after, QStringLiteral("Replace word")));
+    m_undo.beginMacro(TR("Replace word"));
+    for (const Change& ch : changes) m_undo.push(new TranscriptCommand(this, ch.id, ch.before, ch.after, TR("Replace word")));
     m_undo.endMacro();
     return total;
 }
@@ -205,7 +206,7 @@ void Project::commit(const QString& text, const Timeline& before) {
 }
 
 void Project::setSequenceSettings(int w, int h, double fps) {
-    edit("Sequence Settings", [&](Timeline& t) {
+    edit(TR("Sequence Settings"), [&](Timeline& t) {
         t.width = w;
         t.height = h;
         t.fps = fps;
@@ -390,7 +391,7 @@ bool Project::load(const QString& path, QString* error) {
     QJsonParseError pe;
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
     if (doc.isNull() || !doc.isObject() || doc.object()["format"].toString() != "hr-premiere-project") {
-        if (error) *error = "Not an HR Premiere project file";
+        if (error) *error = TR("Not an HR Premiere project file");
         return false;
     }
     const QJsonObject root = doc.object();

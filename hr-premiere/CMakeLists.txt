@@ -54,6 +54,8 @@ add_library(hrcore STATIC
     src/engine/VoiceRecorder.cpp
     src/ai/Silence.cpp
     src/ai/Cleanup.cpp
+    src/ai/SmartEdit.cpp
+    src/ai/ChatParser.cpp
     src/ai/Scenes.cpp
     src/ai/Transcript.cpp
     src/ai/Whisper.cpp
@@ -79,6 +81,7 @@ if(HR_BUILD_APP)
         src/ui/WorkspaceBar.cpp
         src/ui/Dialogs.cpp
         src/ui/AiPanel.cpp
+        src/ui/ChatView.cpp
         src/ui/MainWindow.cpp
         resources/resources.qrc
     )

@@ -64,7 +64,7 @@ MainWindow::MainWindow(bool restoreLayout) : m_restoreLayout(restoreLayout) {
         m_source->setTimeline(std::make_shared<const Timeline>(Timeline::makeDefault(1, 1)));
         m_sourceMon->setPlaceholder(TR("Double-click a clip in the Project panel\nto load it here"));
         m_sourceMon->syncDuration();
-        m_dockSource->setWindowTitle("Source: (no clips)");
+        m_dockSource->setWindowTitle(TR("Source: (no clips)"));
         m_program->seek(0);
         m_timeline->zoomToFit();
     });
@@ -106,12 +106,15 @@ QDockWidget* MainWindow::makeDock(const QString& title, const QString& objectNam
 void MainWindow::buildUi() {
     // --- workspace bar -----------------------------------------------------
     m_workspaceBar = new WorkspaceBar(this);
+    m_workspaceBar->setLayoutDirection(Qt::LeftToRight);   // editing controls keep their order in Arabic
     connect(m_workspaceBar, &WorkspaceBar::workspaceSelected, this, &MainWindow::applyWorkspace);
     connect(m_workspaceBar, &WorkspaceBar::logoClicked, this, [this] { OwnershipDialog(this).exec(); });
 
     // --- monitors -----------------------------------------------------------
     m_programMon = new MonitorPanel(m_program, MonitorPanel::Program, this);
+    m_programMon->setLayoutDirection(Qt::LeftToRight);   // editing controls keep their order in Arabic
     m_sourceMon = new MonitorPanel(m_source, MonitorPanel::Source, this);
+    m_sourceMon->setLayoutDirection(Qt::LeftToRight);   // editing controls keep their order in Arabic
     m_sourceMon->setSequenceSize(QSize(1920, 1080));
     connect(m_programMon, &MonitorPanel::interacted, this, [this] { m_sourceActive = false; });
     connect(m_sourceMon, &MonitorPanel::interacted, this, [this] { m_sourceActive = true; });
@@ -167,9 +170,9 @@ void MainWindow::buildUi() {
     connect(m_effectsBrowser, &EffectsBrowser::applyEffect, this, &MainWindow::applyEffectToSelection);
 
     // --- docks ----------------------------------------------------------------
-    m_dockSource = makeDock("Source: (no clips)", "dock_source", m_sourceMon);
+    m_dockSource = makeDock(TR("Source: (no clips)"), "dock_source", m_sourceMon);
     m_dockEffectControls = makeDock(TR("Effect Controls"), "dock_effect_controls", m_effectControls);
-    m_dockProgram = makeDock("Program: Sequence 01", "dock_program", m_programMon);
+    m_dockProgram = makeDock(TR("Program: Sequence 01"), "dock_program", m_programMon);
     m_dockProject = makeDock(TR("Project"), "dock_project", m_projectPanel);
     m_dockEffects = makeDock(TR("Effects"), "dock_effects", m_effectsBrowser);
     m_dockHistory = makeDock(TR("History"), "dock_history", m_history);
@@ -247,6 +250,7 @@ void MainWindow::buildUi() {
     row->addWidget(m_meters);
 
     auto* central = new QWidget(this);
+    central->setLayoutDirection(Qt::LeftToRight);   // time runs left to right, also in the Arabic version
     auto* cl = new QVBoxLayout(central);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(0);
@@ -432,7 +436,7 @@ void MainWindow::buildMenus() {
     });
 
     // ---- AI
-    QMenu* aiMenu = mb->addMenu("A&I");
+    QMenu* aiMenu = mb->addMenu(TR("A&I"));
     auto showAi = [this] { m_dockAi->show(); m_dockAi->raise(); };
     addAction(aiMenu, TR("Open AI Assistant"), QKeySequence(), showAi);
     aiMenu->addSeparator();
@@ -457,7 +461,7 @@ void MainWindow::buildMenus() {
     // ---- Help
     QMenu* help = mb->addMenu(TR("&Help"));
     addAction(help, TR("Keyboard Shortcuts"), QKeySequence("Ctrl+/"), [this] { ShortcutsDialog(this).exec(); });
-    addAction(help, TR("الملكية  ·  Ownership"), QKeySequence(), [this] { OwnershipDialog(this).exec(); });
+    addAction(help, "الملكية  ·  Ownership", QKeySequence(), [this] { OwnershipDialog(this).exec(); });
     addAction(help, TR("About HR Premiere"), QKeySequence(), [this] { AboutDialog(this).exec(); });
 }
 
@@ -525,7 +529,7 @@ void MainWindow::setTool(Tool t) {
     m_timeline->setTool(t);
     m_tools->setTool(t);
     static const char* names[] = {"Selection", "Track Select Forward", "Ripple Edit", "Razor", "Hand", "Zoom", "Type"};
-    setStatus(QString("Tool: %1").arg(names[int(t)]));
+    setStatus(QString(TR("Tool: %1")).arg(TR(names[int(t)])));
 }
 
 void MainWindow::setStatus(const QString& text) {
@@ -563,7 +567,7 @@ void MainWindow::openProject() {
 bool MainWindow::openProjectFile(const QString& path) {
     QString err;
     if (!m_project.load(path, &err)) {
-        QMessageBox::warning(this, TR("Open Project"), QString("Could not open the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Open Project"), QString(TR("Could not open the project:\n%1")).arg(err));
         return false;
     }
     QSettings().setValue("project/dir", QFileInfo(path).absolutePath());
@@ -578,7 +582,7 @@ bool MainWindow::saveProject() {
     if (m_project.filePath().isEmpty()) return saveProjectAs();
     QString err;
     if (!m_project.save(m_project.filePath(), &err)) {
-        QMessageBox::warning(this, TR("Save Project"), QString("Could not save the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Save Project"), QString(TR("Could not save the project:\n%1")).arg(err));
         return false;
     }
     setStatus(TR("Project saved"));
@@ -592,7 +596,7 @@ bool MainWindow::saveProjectAs() {
     if (!path.endsWith(".hrproj", Qt::CaseInsensitive)) path += ".hrproj";
     QString err;
     if (!m_project.save(path, &err)) {
-        QMessageBox::warning(this, TR("Save Project"), QString("Could not save the project:\n%1").arg(err));
+        QMessageBox::warning(this, TR("Save Project"), QString(TR("Could not save the project:\n%1")).arg(err));
         return false;
     }
     QSettings().setValue("project/dir", QFileInfo(path).absolutePath());
@@ -618,8 +622,8 @@ QStringList MainWindow::importFiles(const QStringList& paths, bool quiet) {
     for (const QString& id : ids)
         if (const MediaItem* m = m_project.mediaById(id)) m_assets.request(*m);
     if (!errors.isEmpty() && !quiet)
-        QMessageBox::warning(this, TR("Import"), QString("Some files could not be imported:\n\n%1").arg(errors.join('\n')));
-    if (!ids.isEmpty()) setStatus(QString(TR("Imported %1 file%2")).arg(ids.size()).arg(ids.size() == 1 ? "" : "s"));
+        QMessageBox::warning(this, TR("Import"), QString(TR("Some files could not be imported:\n\n%1")).arg(errors.join('\n')));
+    if (!ids.isEmpty()) setStatus(QString(TR("Imported %1 file(s)")).arg(ids.size()));
     return ids;
 }
 
@@ -692,7 +696,7 @@ void MainWindow::onTimelineChanged() {
     m_programMon->syncDuration();
     m_program->refresh();
     m_tlName->setText(tl.name);
-    m_dockProgram->setWindowTitle(QString("Program: %1").arg(tl.name));
+    m_dockProgram->setWindowTitle(QString(TR("Program: %1")).arg(tl.name));
 }
 
 void MainWindow::onProgramPosition(double t) {
@@ -724,7 +728,7 @@ void MainWindow::loadSource(const QString& id) {
     m_sourceMon->setMarks(m->markIn, m->markOut);
     m_sourceMon->syncDuration();
     m_source->seek(0);
-    m_dockSource->setWindowTitle(QString("Source: %1").arg(m->name));
+    m_dockSource->setWindowTitle(QString(TR("Source: %1")).arg(m->name));
     m_dockSource->show();
     m_dockSource->raise();
     m_sourceActive = true;
@@ -818,7 +822,7 @@ void MainWindow::copySelection(bool cut) {
         if (!r.valid()) continue;
         m_clipboard.push_back({*tl.clip(r), r.type, r.track});
     }
-    setStatus(QString(TR("Copied %1 clip%2")).arg(m_clipboard.size()).arg(m_clipboard.size() == 1 ? "" : "s"));
+    setStatus(QString(TR("Copied %1 clip(s)")).arg(m_clipboard.size()));
     if (cut) deleteSelection(false);
 }
 
@@ -1039,7 +1043,7 @@ QString MainWindow::voiceOverPath() const {
         dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/voice-overs");
     dir.mkpath(".");
     for (int i = 1; i < 10000; ++i) {
-        const QString f = dir.filePath(QString(TR("Voice-over %1.wav")).arg(i, 2, 10, QLatin1Char('0')));
+        const QString f = dir.filePath(QString("Voice-over %1.wav").arg(i, 2, 10, QLatin1Char('0')));
         if (!QFileInfo::exists(f)) return f;
     }
     return dir.filePath("Voice-over.wav");
@@ -1069,7 +1073,7 @@ void MainWindow::toggleVoiceOver(int audioTrack) {
     m_recLabel->show();
     m_timeline->setRecording(m_voTrack, m_voStart, m_voStart);
     m_voCountdown->start();
-    setStatus("Voice-over: get ready – press Space or the microphone button again to stop");
+    setStatus(TR("Voice-over: get ready – press Space or the microphone button again to stop"));
 }
 
 void MainWindow::updateRecIndicator() {

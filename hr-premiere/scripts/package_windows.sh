@@ -39,9 +39,13 @@ PREFIX="${MSYSTEM_PREFIX:-$(dirname "$(dirname "$FFMPEG")")}"
 echo "---- ggml / whisper in $PREFIX ----"
 (pacman -Q 2>/dev/null | grep -i -E 'ggml|whisper|ffmpeg' || true)
 find "$PREFIX" \( -iname '*ggml*.dll' -o -iname '*whisper*.dll' \) 2>/dev/null | sort || true
+# The "sapphirerapids" variant uses Intel AMX.  ggml picks the best variant from the CPU's feature bits only, but AMX also
+# needs the operating system to have enabled it; where it has not (Windows Server, older Windows 10) the speech filter
+# dies on the first matrix multiplication.  Without that file ggml simply takes the next best variant (AVX-512 / AVX2).
 while IFS= read -r plugin; do
   [ -n "$plugin" ] || continue
   base="$(basename "$plugin")"
+  case "$base" in *sapphirerapids*|*amx*) echo "left out (AMX): $base"; continue;; esac
   if [ ! -f "$OUT/$base" ]; then cp "$plugin" "$OUT/$base"; echo "bundled ggml CPU plug-in: $base"; fi
 done < <(find "$PREFIX" \( -iname 'ggml-cpu*.dll' -o -iname 'libggml-cpu*.dll' \) 2>/dev/null)
 

@@ -142,6 +142,8 @@ jobs:
           Write-Host "---- ggml / whisper files in the package ----"
           Get-ChildItem $dir -Filter "*.dll" | Where-Object { $_.Name -match 'ggml|whisper' } | ForEach-Object { Write-Host ("{0}  {1:N0} bytes" -f $_.Name, $_.Length) }
 
+          Write-Host ("CPU: " + (Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name))
+          Write-Host ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
           $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
           $srt = Join-Path (Get-Location) "dist\speech_test.srt"
           # (one argument string with the paths quoted: an array with escaped quotes breaks Start-Process)
@@ -157,6 +159,7 @@ jobs:
             $savedPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
             Push-Location $env:HR_AI_DIR
             & "$dir\ffmpeg.exe" -hide_banner -loglevel debug -nostdin -y -i $wav -vn -af "whisper=model=ggml-tiny.bin:language=en:queue=20:use_gpu=false:destination=diag.srt:format=srt" -f null - 2>&1 | Select-Object -Last 80 | ForEach-Object { Write-Host "$_" }
+            Write-Host ("ffmpeg debug run exit code: 0x{0:X8}" -f $LASTEXITCODE)
             Pop-Location
             $ErrorActionPreference = $savedPreference
             throw "speech recognition failed (exit code $($p.ExitCode))"
@@ -166,6 +169,7 @@ jobs:
           if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
 
       - name: AI accuracy on noisy speech (experiment - never fails the build)
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 20
         shell: pwsh
@@ -233,8 +237,14 @@ jobs:
         run: |
           choco install innosetup -y --no-progress
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          # The first page of the installer lets the user choose Arabic or English (installer\Arabic.isl).
           & $iscc "/O$PWD\dist" "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "hr-premiere\installer\hrpremiere.iss"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          if ($LASTEXITCODE -ne 0) {
+            # Never lose the installer because of a mistake in the Arabic page: build the English-only one and say so loudly.
+            Write-Host "::warning::The installer with the Arabic language page did not compile - building the English-only installer instead"
+            & $iscc "/O$PWD\dist" "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "/DNO_ARABIC=1" "hr-premiere\installer\hrpremiere.iss"
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          }
           if (-not (Test-Path "dist\HR-Premiere-Setup.exe")) { throw "the installer was not created in dist\" }
 
       - name: Upload installer

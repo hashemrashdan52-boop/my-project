@@ -1,16 +1,22 @@
 // Tests for the AI assistant's logic (no window needed): Arabic text matching, transcript edits, motion,
 // transcript quality, audio clean-up, the smart edit planner and the chat command parser.
+#include "ai/ChatParser.h"
 #include "ai/Cleanup.h"
 #include "ai/Silence.h"
+#include "ai/SmartEdit.h"
 #include "ai/Transcript.h"
+#include "ai/Whisper.h"
 #include "core/EditOps.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/TextUtil.h"
 #include "engine/DecoderPool.h"
 #include "engine/Exporter.h"
 #include "engine/Renderer.h"
 
+#include <QDirIterator>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <cmath>
@@ -47,12 +53,257 @@ static Blob blobOf(const QImage& img) {
     return b;
 }
 
+
+// A talking-head clip of `dur` seconds that exists only as data (no file): enough for the planner and the editor.
+static MediaItem talkMedia(double dur) {
+    MediaItem m;
+    m.id = "talk";
+    m.name = "talk.mp4";
+    m.path = "/nonexistent/talk.mp4";
+    m.kind = MediaKind::Video;
+    m.duration = dur;
+    m.width = 1920;
+    m.height = 1080;
+    m.fps = 30;
+    m.hasVideo = m.hasAudio = true;
+    return m;
+}
+static const char* kSentence = "this is a sentence with about fifteen words so that the speed estimate stays stable";
+
 class AiTests : public QObject {
     Q_OBJECT
     QTemporaryDir dir;
 
 private slots:
     void initTestCase() { QVERIFY(dir.isValid()); }
+
+    // ------------------------------------------------------------------ the chat understands requests
+    void theChatUnderstandsArabicAndEnglishRequests() {
+        using I = ai::Intent;
+        struct Row { const char* text; I intent; };
+        const Row rows[] = {
+            // the whole edit (the first two are the user's own words)
+            {"خلي يعمل مونتاج كامل حركات ويشيل القطات الي انا فيها ساكت", I::FullEdit},
+            {"اعمل مونتاج كامل", I::FullEdit}, {"مونتاج تلقائي للفيديو", I::FullEdit}, {"اعملي مونتاج سريع للتيك توك", I::FullEdit},
+            {"مونتاج هادي سينمائي", I::FullEdit}, {"حرر الفيديو", I::FullEdit}, {"حسّن الفيديو", I::FullEdit}, {"رتب الفيديو", I::FullEdit},
+            {"edit my video automatically", I::FullEdit}, {"full edit please", I::FullEdit}, {"auto edit", I::FullEdit},
+            {"مونتاج كامل بدون ترجمة", I::FullEdit}, {"مونتاج كامل بدون زوم وبدون فيد", I::FullEdit},
+            // dead air
+            {"شيل الصمت", I::RemoveSilence}, {"احذف الأماكن الساكتة", I::RemoveSilence}, {"شيل القطات الساكتة", I::RemoveSilence},
+            {"remove the silences", I::RemoveSilence}, {"قص السكوت", I::RemoveSilence}, {"cut the dead air silence", I::RemoveSilence},
+            {"الصمت اللي اطول من ثانيتين شيله", I::RemoveSilence}, {"remove pauses longer than 1.5 seconds silence", I::RemoveSilence},
+            // captions
+            {"ضيف ترجمة", I::AddCaptions}, {"اكتب الكلام على الشاشة", I::AddCaptions}, {"add subtitles", I::AddCaptions}, {"ضيفلي كابشن", I::AddCaptions},
+            {"شيل الترجمة", I::RemoveCaptions}, {"بدون ترجمة", I::RemoveCaptions}, {"remove the captions", I::RemoveCaptions}, {"احذف السبتايتل", I::RemoveCaptions},
+            {"خلي الترجمة صفراء", I::CaptionStyle}, {"الترجمة لونها أصفر", I::CaptionStyle}, {"كبّر الترجمة", I::CaptionStyle},
+            {"صغّر الترجمة وخليها فوق", I::CaptionStyle}, {"make the captions bigger", I::CaptionStyle}, {"الترجمة بالنص", I::CaptionStyle},
+            {"ضيف ترجمة بالأحمر", I::AddCaptions},
+            // movement and fades
+            {"ضيف زوم", I::MotionOn}, {"اعمل حركات", I::MotionOn}, {"add some zoom", I::MotionOn}, {"بدون زوم", I::MotionOff}, {"شيل الحركات", I::MotionOff},
+            {"no zoom", I::MotionOff}, {"زوم اقل", I::MotionLess}, {"خفف الزوم", I::MotionLess}, {"less movement", I::MotionLess},
+            {"زوم اكثر", I::MotionMore}, {"make the zoom stronger", I::MotionMore}, {"ضيف فيد", I::FadesOn}, {"بدون فيد", I::FadesOff},
+            // speed
+            {"سرّع الفيديو 2x", I::ChangeSpeed}, {"بطّئ الفيديو", I::ChangeSpeed}, {"سرع الفيديو ضعفين", I::ChangeSpeed}, {"slow down by 3", I::ChangeSpeed},
+            // undo / redo
+            {"تراجع", I::Undo}, {"ارجع زي ما كان", I::Undo}, {"undo", I::Undo}, {"الغي اخر شي", I::Undo}, {"اعادة", I::Redo}, {"redo", I::Redo},
+            // text
+            {"غيّر كلمة \"اهلا\" إلى \"مرحبا\"", I::ReplaceWord}, {"بدّل مرحبا ب اهلا", I::ReplaceWord}, {"replace hello with hi", I::ReplaceWord},
+            {"change the word color to colour", I::ReplaceWord},
+            {"عدل الجملة 3 الى اهلا وسهلا", I::EditSentence}, {"الجملة الثانية خليها «مرحبا بكم»", I::EditSentence}, {"change sentence 2 to hello there", I::EditSentence},
+            {"احذف الجملة 2", I::DeleteSentences}, {"شيل كل جملة فيها كلمة اشتركوا", I::DeleteSentences}, {"احذف اخر جملة", I::DeleteSentences},
+            {"delete the last sentence", I::DeleteSentences}, {"خلي بس الجمل اللي فيها مونتاج", I::KeepSentences},
+            {"الكلام فيه اخطاء", I::ShowDoubtful}, {"النص مش صح", I::ShowDoubtful}, {"some of the text is wrong", I::ShowDoubtful}, {"وين الاخطاء بالكلام", I::ShowDoubtful},
+            {"عدل النص", I::HowToEditText}, {"اقدر اعدل النص", I::HowToEditText},
+            // sound and recognition
+            {"الصوت مش واضح", I::CleanAudio}, {"في ضجيج بالفيديو", I::CleanAudio}, {"نظف الصوت", I::CleanAudio}, {"the audio is noisy", I::CleanAudio},
+            {"اعد التفريغ بدقة أعلى", I::BetterAccuracy}, {"اكثر دقة", I::BetterAccuracy}, {"transcribe again more accurately", I::BetterAccuracy},
+            {"فرغ الكلام", I::Transcribe}, {"حول الكلام الي نص", I::Transcribe}, {"transcribe the video", I::Transcribe},
+            // scenes, info, files
+            {"قص عند تغير المشاهد", I::Scenes}, {"حط علامات عند المشاهد", I::Scenes}, {"detect scenes", I::Scenes}, {"cut at scene changes", I::Scenes},
+            {"لخص الفيديو", I::Summary}, {"شو في بالفيديو", I::Summary}, {"how long is it", I::Summary}, {"صدّر الترجمة", I::ExportSrt}, {"export the subtitles", I::ExportSrt},
+            {"الكلام بالانجليزي", I::SetLanguage}, {"the speech is in english", I::SetLanguage},
+            // small talk
+            {"ساعدني", I::Help}, {"شو بتقدر تعمل", I::Help}, {"help", I::Help}, {"what can you do", I::Help},
+            {"مرحبا", I::Greeting}, {"هلا", I::Greeting}, {"hello", I::Greeting}, {"شكراً", I::Thanks}, {"thanks", I::Thanks},
+            {"نعم", I::Yes}, {"اه", I::Yes}, {"yes", I::Yes}, {"ok", I::Yes}, {"لا", I::No}, {"no", I::No},
+            {"كيف حال الطقس اليوم", I::Unknown}, {"", I::Unknown}, {"   ", I::Unknown},
+        };
+        QStringList wrong;
+        for (const Row& r : rows) {
+            const ai::Command c = ai::parseChat(QString::fromUtf8(r.text));
+            if (c.intent != r.intent) wrong << QString("\"%1\"  expected %2, got %3  (%4)").arg(QString::fromUtf8(r.text)).arg(int(r.intent)).arg(int(c.intent)).arg(c.normalized);
+        }
+        QVERIFY2(wrong.isEmpty(), qPrintable(QString("%1 misunderstood:\n  ").arg(wrong.size()) + wrong.join("\n  ")));
+    }
+
+    void theChatPicksUpTheDetails() {
+        using I = ai::Intent;
+        auto cmd = [](const char* t) { return ai::parseChat(QString::fromUtf8(t)); };
+        // presets and the parts the user does not want
+        ai::Command c = cmd("اعملي مونتاج سريع للتيك توك");
+        QCOMPARE(c.preset, QString("fast"));
+        QCOMPARE(cmd("مونتاج هادي سينمائي").preset, QString("calm"));
+        QCOMPARE(cmd("اعمل مونتاج كامل").preset, QString());
+        c = cmd("مونتاج كامل بدون زوم وبدون فيد");
+        QVERIFY(c.without.contains("motion") && c.without.contains("fades") && !c.without.contains("captions"));
+        QVERIFY(cmd("مونتاج كامل بدون ترجمة").without.contains("captions"));
+        QVERIFY(cmd("full edit without captions").without.contains("captions"));
+        // lengths of time
+        QVERIFY(std::abs(cmd("شيل الصمت اللي اطول من نص ثانية").seconds - 0.5) < 1e-9);
+        QVERIFY(std::abs(cmd("شيل الصمت اللي اطول من ثانيتين").seconds - 2.0) < 1e-9);
+        QVERIFY(std::abs(cmd("شيل الصمت اللي اطول من ثانية ونص").seconds - 1.5) < 1e-9);
+        QVERIFY(std::abs(cmd("شيل الصمت اللي اطول من 3 ثواني").seconds - 3.0) < 1e-9);
+        QVERIFY(std::abs(cmd("remove silence longer than 0.8s").seconds - 0.8) < 1e-9);
+        QVERIFY(std::abs(cmd("remove silences longer than 1.5 seconds").seconds - 1.5) < 1e-9);
+        QVERIFY(std::isnan(cmd("شيل الصمت").seconds));
+        // caption look
+        c = cmd("خلي الترجمة صفراء");
+        QCOMPARE(c.color, QString("#ffd60a"));
+        QCOMPARE(cmd("make the captions red").color, QString("#ff3b30"));
+        QVERIFY(cmd("كبّر الترجمة").bigger && !cmd("كبّر الترجمة").smaller);
+        c = cmd("صغّر الترجمة وخليها فوق");
+        QVERIFY(c.smaller);
+        QCOMPARE(c.position, QString("top"));
+        QCOMPARE(cmd("الترجمة تحت").position, QString("bottom"));
+        QCOMPARE(cmd("الترجمة بالنص").position, QString("center"));
+        c = cmd("ضيف ترجمة بالأحمر وكبيرة");
+        QCOMPARE(c.intent, I::AddCaptions);
+        QCOMPARE(c.color, QString("#ff3b30"));
+        QVERIFY(c.bigger);
+        // speed
+        QVERIFY(std::abs(cmd("سرّع الفيديو 2x").number - 2.0) < 1e-9);
+        QVERIFY(std::abs(cmd("بطّئ الفيديو").number - 0.5) < 1e-9);
+        QVERIFY(std::abs(cmd("سرع الفيديو 3 مرات").number - 3.0) < 1e-9);
+        // words and sentences
+        c = cmd("غيّر كلمة \"اهلا\" إلى \"مرحبا\"");
+        QCOMPARE(c.from, QString::fromUtf8("اهلا"));
+        QCOMPARE(c.to, QString::fromUtf8("مرحبا"));
+        c = cmd("بدّل مرحبا ب اهلا وسهلا");
+        QCOMPARE(c.from, QString::fromUtf8("مرحبا"));
+        QCOMPARE(c.to, QString::fromUtf8("اهلا وسهلا"));
+        c = cmd("replace the word hello with hi there");
+        QCOMPARE(c.from, QString("hello"));
+        QCOMPARE(c.to, QString("hi there"));
+        c = cmd("عدل الجملة 3 الى اهلا وسهلا بكم");
+        QCOMPARE(c.sentence, 3);
+        QCOMPARE(c.to, QString::fromUtf8("اهلا وسهلا بكم"));
+        QCOMPARE(cmd("الجملة الثانية خليها «مرحبا بكم»").sentence, 2);
+        QCOMPARE(cmd("الجملة الثانية خليها «مرحبا بكم»").to, QString::fromUtf8("مرحبا بكم"));
+        QCOMPARE(cmd("احذف الجملة 2").sentence, 2);
+        QCOMPARE(cmd("احذف اخر جملة").sentence, -1);
+        QCOMPARE(cmd("شيل كل جملة فيها كلمة اشتركوا").from, QString::fromUtf8("اشتركوا"));
+        QCOMPARE(cmd("delete every sentence containing \"subscribe\"").from, QString("subscribe"));
+        QCOMPARE(cmd("delete every sentence with the word third").from, QString("third"));
+        QCOMPARE(cmd("delete every sentence that has the word third").from, QString("third"));
+        QCOMPARE(cmd("remove the sentences having hello world").from, QString("hello world"));
+        QCOMPARE(cmd("keep only the sentences with the word offer").intent, I::KeepSentences);
+        QCOMPARE(cmd("keep only the sentences with the word offer").from, QString("offer"));
+        QCOMPARE(cmd("احذف كل جملة فيها كلمة مرحبا").from, QString::fromUtf8("مرحبا"));
+        QCOMPARE(cmd("احذف كل جملة فيها مرحبا").from, QString::fromUtf8("مرحبا"));
+        QCOMPARE(cmd("قص عند تغير المشاهد").cutScenes, true);
+        QCOMPARE(cmd("حط علامات عند المشاهد").cutScenes, false);
+        QCOMPARE(cmd("الكلام بالانجليزي").language, QString("en"));
+        QCOMPARE(cmd("الصوت مش واضح").level, QString("strong"));
+        QCOMPARE(cmd("نظف الصوت").level, QString("light"));
+    }
+
+    // ------------------------------------------------------------------ the two languages
+    void everyTextOfTheProgramHasAnArabicTranslation() {
+        // collect every TR("...") of the sources (adjacent string literals are one text)
+        const QRegularExpression call("\\bTR\\(\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*)+)[,)]");
+        const QRegularExpression piece("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        auto unescape = [](QString s) {
+            QString out;
+            for (int i = 0; i < s.size(); ++i) {
+                if (s[i] == '\\' && i + 1 < s.size()) {
+                    const QChar n = s[++i];
+                    out += n == 'n' ? QChar('\n') : n == 't' ? QChar('\t') : n;
+                } else out += s[i];
+            }
+            return out;
+        };
+        QStringList missing;
+        int checked = 0;
+        for (const QString sub : {"src/ui", "src/ai", "src/engine", "src/media", "src/core"}) {
+            QDirIterator it(QString(QT_TESTCASE_SOURCEDIR) + "/" + sub, {"*.cpp"}, QDir::Files);
+            while (it.hasNext()) {
+                QFile f(it.next());
+                if (QFileInfo(f).fileName().startsWith("I18n")) continue;      // the table itself talks about TR() in comments
+                QVERIFY(f.open(QIODevice::ReadOnly));
+                const QString src = QString::fromUtf8(f.readAll());
+                auto m = call.globalMatch(src);
+                while (m.hasNext()) {
+                    QString text;
+                    auto pm = piece.globalMatch(m.next().captured(1));
+                    while (pm.hasNext()) text += pm.next().captured(1);
+                    text = unescape(text);
+                    ++checked;
+                    if (!i18n::hasArabic(text)) missing << QFileInfo(f).fileName() + ": " + text;
+                }
+            }
+        }
+        QVERIFY2(checked > 300, qPrintable(QString::number(checked)));
+        QVERIFY2(missing.isEmpty(), qPrintable("no Arabic text for:\n  " + missing.join("\n  ")));
+        // texts that are stored as const char* and translated when they are shown
+        for (const char* t : {"Selection Tool (V)", "Track Select Forward Tool (A)", "Ripple Edit Tool (B)", "Razor Tool (C)", "Hand Tool (H)",
+                              "Zoom Tool (Z)", "Type Tool (T) – click a video track to add a title", "Editing", "Assembly", "Color", "Effects", "Audio",
+                              "AI", "Selection", "Track Select Forward", "Ripple Edit", "Razor", "Hand", "Zoom", "Type", "Custom"})
+            QVERIFY2(i18n::hasArabic(QString::fromUtf8(t)), t);
+    }
+
+    void namesTakenFromListsAreTranslatedToo() {
+        // texts that reach TR() through a variable (the scan above cannot see them)
+        QStringList missing;
+        auto need = [&](const QString& what, const QString& text) {
+            if (!text.isEmpty() && !i18n::hasArabic(text)) missing << what + ": " + text;
+        };
+        for (const EffectDef& d : EffectRegistry::all()) {
+            need("effect", d.name);
+            need("category", d.category);
+            for (const ParamDef& p : d.params) {
+                need("parameter of " + d.name, p.label);
+                for (const QString& c : p.choices) need("choice of " + p.label, c);
+            }
+        }
+        for (bool video : {true, false})
+            for (const QString& c : EffectRegistry::categories(video)) need("category", c);
+        for (const ai::ModelInfo& m : ai::AiModels::models()) need("speech model", m.title);
+        for (const char* l : {"Auto-detect", "Arabic", "English", "French", "Spanish", "German", "Turkish", "Persian", "Urdu", "Hindi", "Russian",
+                              "Italian", "Portuguese", "Indonesian", "Japanese", "Korean", "Chinese"})
+            need("language", QString::fromUtf8(l));
+        for (const char* l : {"Custom", "HD 1080p  (1920 × 1080)", "HD 720p  (1280 × 720)", "4K UHD  (3840 × 2160)",
+                              "Vertical 1080 × 1920 (Reels / TikTok)", "Square 1080 × 1080"})
+            need("preset", QString::fromUtf8(l));
+        QVERIFY2(missing.isEmpty(), qPrintable("no Arabic text for:\n  " + missing.join("\n  ")));
+    }
+
+    void arabicEntriesKeepTheirPlaceholders() {
+        static const QRegularExpression mark("%\\d");
+        for (auto it = i18n::arabicCatalog().cbegin(); it != i18n::arabicCatalog().cend(); ++it) {
+            QStringList a, b;
+            auto m1 = mark.globalMatch(it.key());
+            while (m1.hasNext()) a << m1.next().captured();
+            auto m2 = mark.globalMatch(it.value());
+            while (m2.hasNext()) b << m2.next().captured();
+            a.sort();
+            b.sort();
+            QVERIFY2(a == b, qPrintable(it.key()));
+        }
+    }
+
+    void theLanguageSwitchChangesWhatTRReturns() {
+        const auto before = i18n::current();
+        i18n::setCurrent(i18n::Lang::English);
+        QCOMPARE(TR("Save"), QString("Save"));
+        i18n::setCurrent(i18n::Lang::Arabic);
+        QCOMPARE(TR("Save"), QString::fromUtf8("حفظ"));
+        QCOMPARE(TR("This text has no translation"), QString("This text has no translation"));   // falls back to English
+        QVERIFY(i18n::isRtl());
+        QCOMPARE(i18n::fromCode("ar-SA"), i18n::Lang::Arabic);
+        QCOMPARE(i18n::fromCode("EN"), i18n::Lang::English);
+        QCOMPARE(i18n::fromCode("fr", i18n::Lang::Arabic), i18n::Lang::Arabic);
+        i18n::setCurrent(before);
+    }
 
     // ------------------------------------------------------------------ Arabic text
     void arabicNormalisationFoldsTheUsualVariants() {
@@ -181,6 +432,161 @@ private slots:
         QCOMPARE(out.size(), 3);
         QCOMPARE(out[0].text, QString::fromUtf8("مرحبا بكم"));
         QCOMPARE(out[2].text, QString("hello hello"));
+    }
+
+    // ------------------------------------------------------------------ the smart edit
+    void thePlannerAdaptsToTheFootage() {
+        auto profile = [](double noise, double speech, double wps, bool transcript) {
+            ai::VideoProfile p;
+            p.duration = 60;
+            p.hasVideo = true;
+            p.audio.valid = true;
+            p.audio.noiseFloorDb = noise;
+            p.audio.speechDb = speech;
+            p.hasTranscript = transcript;
+            p.speechRatio = transcript ? 0.8 : -1;
+            p.wordsPerSecond = wps;
+            return p;
+        };
+        // a clean, fast talker: short pauses are cut, waveform + sentences are used, shots are punched in
+        ai::EditPlan fast = ai::planEdit(profile(-55, -8, 3.6, true), ai::EditStyle());
+        QVERIFY(std::abs(fast.silence.minSilence - 0.35) < 1e-9);
+        QVERIFY2(fast.silence.thresholdDb > -52 && fast.silence.thresholdDb < -30, qPrintable(QString::number(fast.silence.thresholdDb)));
+        QVERIFY(fast.cutByWaveform && fast.cutSpeechGaps && fast.punch);
+        QVERIFY(fast.reasons.contains("talking") && fast.reasons.contains("fast-talker"));
+        // a slow talker gets longer pauses before anything is cut
+        QVERIFY(std::abs(ai::planEdit(profile(-55, -8, 1.5, true), ai::EditStyle()).silence.minSilence - 0.6) < 1e-9);
+        // strong background noise: the waveform cannot find pauses, the sentences do
+        ai::EditPlan noisy = ai::planEdit(profile(-30, -12, 2.8, true), ai::EditStyle());
+        QVERIFY(!noisy.cutByWaveform && noisy.cutSpeechGaps);
+        QVERIFY(noisy.reasons.contains("noisy"));
+        // too noisy even for that, or nothing recognised: nothing is guessed
+        QVERIFY(!ai::planEdit(profile(-25, -15, 2.8, true), ai::EditStyle()).cutSpeechGaps);
+        QVERIFY(!ai::planEdit(profile(-30, -12, 0, false), ai::EditStyle()).cutByWaveform);
+        // an explicit threshold from the user is respected even then
+        ai::EditStyle forced;
+        forced.thresholdDb = -33;
+        QVERIFY(ai::planEdit(profile(-30, -12, 0, false), forced).cutByWaveform);
+        // the user's wishes win over the automatic choice
+        ai::EditStyle own;
+        own.minSilence = 1.2;
+        own.motionStrength = 0.5;
+        own.pace = ai::Pace::Fast;
+        const ai::EditPlan custom = ai::planEdit(profile(-55, -8, 3.6, true), own);
+        QVERIFY(std::abs(custom.silence.minSilence - 1.2) < 1e-9);
+        QVERIFY(std::abs(custom.punchPercent - 7.0) < 1e-9 && std::abs(custom.maxShot - 4.5) < 1e-9);
+        ai::EditStyle none;
+        none.motion = false;
+        const ai::EditPlan still = ai::planEdit(profile(-55, -8, 3.6, true), none);
+        QCOMPARE(still.punchPercent + still.pushPercent, 0.0);
+        const ai::EditPlan calm = ai::planEdit(profile(-55, -8, 3.6, true), [] { ai::EditStyle e; e.pace = ai::Pace::Calm; return e; }());
+        QVERIFY(!calm.punch && std::abs(calm.maxShot - 11) < 1e-9);
+        ai::VideoProfile vertical = profile(-55, -8, 3, true);
+        vertical.vertical = true;
+        const ai::EditPlan tall = ai::planEdit(vertical, ai::EditStyle());
+        QVERIFY(tall.captionChars < 30 && tall.caption.size < 40);
+    }
+
+    void theSmartEditCutsSplitsZoomsFadesAndCaptions() {
+        const MediaItem m = talkMedia(30);
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(m, 0, 30, 0), 0, 0, false);
+        // speech 0-6, silence 6-8, speech 8-16, silence 16-17, speech 17-30
+        QVector<quint8> peaks(3000, 5);
+        auto speech = [&](double a, double b) { for (int i = int(a * 100); i < int(b * 100); ++i) peaks[i] = 150; };
+        speech(0, 6); speech(8, 16); speech(17, 30);
+        QVector<MediaItem> media = {m};
+        const QString text = kSentence;
+        media[0].transcript = {{0.1, 5.9, text}, {8.1, 15.9, text}, {17.1, 22.0, text}, {22.3, 26.2, text}, {26.4, 29.9, text}};
+        auto provider = [&](const QString& id) -> const QVector<quint8>* { return id == "talk" ? &peaks : nullptr; };
+
+        const ai::VideoProfile profile = ai::analyzeProject(tl, media, provider);
+        QVERIFY(profile.audio.valid && profile.hasTranscript);
+        QVERIFY2(profile.wordsPerSecond > 2.2 && profile.wordsPerSecond < 3.5, qPrintable(QString::number(profile.wordsPerSecond)));
+        const ai::EditPlan plan = ai::planEdit(profile, ai::EditStyle());
+        const ai::EditResult r = ai::applyPlan(tl, plan, media, provider);
+
+        // dead air: both pauses are gone (about 2.4 s), speech untouched
+        QVERIFY2(r.silences == 2 && std::abs(r.oldDuration - r.newDuration - r.silenceSeconds) < 0.05, qPrintable(QString::number(r.silenceSeconds)));
+        QVERIFY2(std::abs(tl.duration() - (30 - r.silenceSeconds)) < 0.05, qPrintable(QString::number(tl.duration())));
+        QVERIFY(r.silenceSeconds > 2.0 && r.silenceSeconds < 3.0);
+        // the long last take is split at a sentence start
+        QVERIFY(r.splits >= 1);
+        const int mt = ai::mainVideoTrack(tl);
+        QCOMPARE(mt, 0);
+        const QVector<Clip>& shots = tl.video[mt].clips;
+        QVERIFY(shots.size() >= 4);
+        QCOMPARE(r.shots, int(shots.size()));
+        for (const Clip& c : shots) QVERIFY2(c.duration < 9.0, qPrintable(QString::number(c.duration)));
+        // zoom: every other shot is closer, all of them creep in
+        QVERIFY(r.zoomed >= 3);
+        QVERIFY(std::abs(shots[0].effect("motion")->num("scale") - 100.0) < 1e-9);
+        QVERIFY(shots[1].effect("motion")->num("scale") > 105.0 && shots[1].effect("motion")->num("scale") <= 150.0);
+        QVERIFY(shots[0].effect("motion")->num("zoom_amount") > 0);
+        QCOMPARE(shots[1].role, QString("motion"));
+        // fades at both ends, tiny ones at every join of the sound
+        QVERIFY(shots.first().effect("opacity")->num("fade_in") > 0.3);
+        QVERIFY(shots.last().effect("opacity")->num("fade_out") > 0.5);
+        const QVector<Clip>& sounds = tl.audio[0].clips;
+        QVERIFY(sounds.size() >= 4);
+        QVERIFY(sounds[1].effect("volume")->num("fade_in") > 0 && sounds[1].effect("volume")->num("fade_in") <= 0.02 + 1e-9);
+        // captions: the sentences that are left, on top of the picture, marked as the assistant's
+        QVERIFY(r.captions >= 5);
+        int caps = 0;
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (c.role == "caption") { ++caps; QVERIFY(c.end() <= tl.duration() + 0.5); }
+        QCOMPARE(caps, r.captions);
+        // running the same plan again on the result never piles things up
+        const ai::EditResult again = ai::applyPlan(tl, plan, media, provider);
+        int caps2 = 0;
+        for (const Track& t : tl.video)
+            for (const Clip& c : t.clips)
+                if (c.role == "caption") ++caps2;
+        QVERIFY2(caps2 <= r.captions + 1, qPrintable(QString("%1 vs %2").arg(caps2).arg(r.captions)));
+        QCOMPARE(again.silences, 0);
+
+        // another wish on a fresh copy of the footage: no movement, no captions
+        Timeline plain = Timeline::makeDefault();
+        ops::placeClips(plain, ops::makeClips(m, 0, 30, 0), 0, 0, false);
+        ai::EditStyle wish;
+        wish.motion = false;
+        wish.captions = false;
+        const ai::EditResult r2 = ai::applyPlan(plain, ai::planEdit(profile, wish), media, provider);
+        QCOMPARE(r2.zoomed, 0);
+        QCOMPARE(r2.captions, 0);
+        QCOMPARE(r2.splits, 0);
+        for (const Clip& c : plain.video[0].clips) QVERIFY(c.effect("motion")->num("zoom_amount") == 0.0 && c.role.isEmpty());
+        // the movements can be taken away again
+        Timeline moved = tl;
+        QVERIFY(ai::clearMotion(moved) > 0);
+        for (const Clip& c : moved.video[0].clips) QVERIFY(c.effect("motion")->num("scale") == 100.0 && c.role != "motion");
+        ai::clearFades(moved);
+        QCOMPARE(moved.video[0].clips.first().effect("opacity")->num("fade_in"), 0.0);
+    }
+
+    void noisyFootageUsesTheSentencesToFindPauses() {
+        const MediaItem m = talkMedia(20);
+        Timeline tl = Timeline::makeDefault();
+        ops::placeClips(tl, ops::makeClips(m, 0, 20, 0), 0, 0, false);
+        QVector<quint8> peaks(2000, 22);                     // steady background noise, never below the silence threshold
+        auto speech = [&](double a, double b, quint8 v) { for (int i = int(a * 100); i < int(b * 100); ++i) peaks[i] = v; };
+        speech(0, 5, 150); speech(8, 12, 150);              // 5-8: only noise.  12-15: loud sound but no recognised words
+        speech(12, 15, 100); speech(15, 20, 150);
+        QVector<MediaItem> media = {m};
+        const QString text = kSentence;
+        media[0].transcript = {{0.1, 4.9, text}, {8.1, 11.9, text}, {15.1, 19.9, text}};
+        auto provider = [&](const QString& id) -> const QVector<quint8>* { return id == "talk" ? &peaks : nullptr; };
+        const ai::VideoProfile profile = ai::analyzeProject(tl, media, provider);
+        const ai::EditPlan plan = ai::planEdit(profile, ai::EditStyle());
+        QVERIFY2(!plan.cutByWaveform && plan.cutSpeechGaps, "noise this strong: pauses come from the sentences");
+        ai::EditStyle only;
+        only.motion = only.captions = only.fades = false;
+        const ai::EditResult r = ai::applyPlan(tl, ai::planEdit(profile, only), media, provider);
+        QCOMPARE(r.silences, 1);                            // the noise-only gap (5-8 s) is cut
+        QCOMPARE(r.keptLoudGaps, 1);                        // the loud gap (12-15 s) might be missed speech: kept
+        QVERIFY2(std::abs(tl.duration() - (20 - r.silenceSeconds)) < 0.05, qPrintable(QString::number(tl.duration())));
+        QVERIFY(r.silenceSeconds > 2.0 && r.silenceSeconds < 3.0);
     }
 
     // ------------------------------------------------------------------ audio clean-up

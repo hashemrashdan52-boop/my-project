@@ -135,7 +135,7 @@ void ExportDialog::formatChanged() {
         if (m_tl.markIn >= 0) a = m_tl.markIn;
         if (m_tl.markOut >= 0) b = m_tl.markOut;
     }
-    m_info->setText(QString("Duration: %1").arg(formatTimecode(std::max(0.0, b - a), m_tl.fps)));
+    m_info->setText(QString(TR("Duration: %1")).arg(formatTimecode(std::max(0.0, b - a), m_tl.fps)));
 }
 
 void ExportDialog::browse() {
@@ -213,7 +213,7 @@ void ExportDialog::startExport() {
         setBusy(false);
         if (ok) {
             m_bar->setValue(1000);
-            m_status->setText(QString("<span style='color:#7bd88f'>✔ Export complete:</span> %1").arg(out.toHtmlEscaped()));
+            m_status->setText(QString("<span style='color:#7bd88f'>✔ %1</span> %2").arg(TR("Export complete:"), out.toHtmlEscaped()));
             m_go->setText(TR("Export again"));
             if (QMessageBox::question(this, TR("Export complete"), TR("Your video is ready.\n\nShow it in its folder?")) == QMessageBox::Yes)
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(out).absolutePath()));
@@ -372,7 +372,7 @@ AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent) {
     auto* ok = new QPushButton("OK");
     ok->setObjectName("primary");
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
-    auto* owner = new QPushButton(TR("الملكية  ·  Ownership"));
+    auto* owner = new QPushButton("الملكية  ·  Ownership");
     connect(owner, &QPushButton::clicked, this, [this] { OwnershipDialog(this).exec(); });
     lay->addWidget(logo);
     lay->addWidget(name);
@@ -398,7 +398,7 @@ static QPixmap pixmapFromResource(const QString& path, QSize box) {
 }
 
 OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(TR("الملكية · Ownership"));
+    setWindowTitle("الملكية · Ownership");
     setLayoutDirection(Qt::RightToLeft);   // Arabic page: the first card is on the right
     setMinimumSize(780, 660);
 
@@ -412,7 +412,7 @@ OwnershipDialog::OwnershipDialog(QWidget* parent) : QDialog(parent) {
     auto* title = new QLabel("الملكية");
     title->setAlignment(Qt::AlignCenter);
     title->setStyleSheet("font-size:30px; font-weight:800; background:transparent;");
-    auto* subtitle = new QLabel(TR("من يملك البرنامج  ·  Who owns this program"));
+    auto* subtitle = new QLabel("من يملك البرنامج  ·  Who owns this program");
     subtitle->setAlignment(Qt::AlignCenter);
     subtitle->setStyleSheet(QString("color:%1; background:transparent;").arg(theme::textDim.name()));
 
@@ -621,7 +621,7 @@ static QPixmap themeSwatch(const theme::Theme& t) {
 
 PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(TR("Preferences"));
-    setMinimumWidth(560);
+    setMinimumWidth(660);                 // wide enough for four colour samples in a row: all eight fit without scrolling
     m_startTheme = theme::currentId();
     m_startAccent = theme::accentOverride();
     auto* lay = new QVBoxLayout(this);

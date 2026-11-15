@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "VoiceRecorder.h"
 
 #include <QAudioDevice>
@@ -25,7 +26,7 @@ bool VoiceRecorder::start(const QString& wavPath, QString* error) {
         return false;
     };
     const QAudioDevice dev = QMediaDevices::defaultAudioInput();
-    if (dev.isNull()) return fail("No microphone was found.");
+    if (dev.isNull()) return fail(TR("No microphone was found."));
 
     QAudioFormat fmt;
     fmt.setSampleRate(48000);
@@ -34,11 +35,11 @@ bool VoiceRecorder::start(const QString& wavPath, QString* error) {
     if (!dev.isFormatSupported(fmt)) fmt = dev.preferredFormat();
     const auto sf = fmt.sampleFormat();
     if (sf != QAudioFormat::Int16 && sf != QAudioFormat::Float && sf != QAudioFormat::Int32 && sf != QAudioFormat::UInt8)
-        return fail("The microphone uses a sample format that is not supported.");
+        return fail(TR("The microphone uses a sample format that is not supported."));
     m_format = fmt;
 
     m_file.setFileName(wavPath);
-    if (!m_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return fail("Could not create " + wavPath + ": " + m_file.errorString());
+    if (!m_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return fail(TR("Could not create ") + wavPath + ": " + m_file.errorString());
     m_dataBytes = 0;
     writeHeader();   // placeholder sizes, fixed in stop()
 
@@ -50,12 +51,12 @@ bool VoiceRecorder::start(const QString& wavPath, QString* error) {
         m_io = nullptr;
         m_file.close();
         QFile::remove(wavPath);
-        return fail("The microphone could not be opened. Check that it is connected and that Windows allows desktop apps to use it (Settings > Privacy > Microphone).");
+        return fail(TR("The microphone could not be opened. Check that it is connected and that Windows allows desktop apps to use it (Settings > Privacy > Microphone)."));
     }
     connect(m_io, &QIODevice::readyRead, this, &VoiceRecorder::onReadyRead);
     connect(m_source.get(), &QAudioSource::stateChanged, this, [this](QAudio::State st) {
         if (st == QAudio::StoppedState && m_source && m_source->error() != QAudio::NoError)
-            emit failed("The microphone stopped unexpectedly.");
+            emit failed(TR("The microphone stopped unexpectedly."));
     });
     return true;
 }

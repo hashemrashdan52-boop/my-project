@@ -33,7 +33,7 @@ RULES = [
     (r'card', {0}),
     (r'ops::makeTitle', {2}),
 ]
-CSS = re.compile(r'^\s*[\w\-#\.\s:,]*[a-z\-]+\s*:\s*[^;]+;?\s*$|^\s*Q[A-Z]\w*[\s\{#:]')
+CSS = re.compile(r'^\s*(?:[\w\-#\.]+\s*:\s*[^;]*;\s*)+$|^\s*Q[A-Z]\w*[\s\{#:]|^\s*[\w\-]+\s*:\s*[^;]*%\d[^;]*;')
 PROSE = re.compile(r'[A-Za-z]{3}')
 
 def arg_index(src, start):

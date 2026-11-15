@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Whisper.h"
 
 #include "Transcript.h"
@@ -78,14 +79,14 @@ void AiModels::fail(const QString& why) {
 
 void AiModels::startNext() {
     if (m_urlIndex >= m_model.urls.size()) {
-        fail(QString("Could not download the speech model \"%1\". %2\nCheck the internet connection and try again.")
-                 .arg(m_model.title, m_lastError));
+        fail(QString(TR("Could not download the speech model \"%1\". %2\nCheck the internet connection and try again."))
+                 .arg(TR(m_model.title), m_lastError));
         return;
     }
     const QUrl url(m_model.urls[m_urlIndex]);
     m_file.setFileName(pathOf(m_model) + ".part");
     if (!m_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        fail("Could not write to " + m_file.fileName() + ": " + m_file.errorString());
+        fail(TR("Could not write to ") + m_file.fileName() + ": " + m_file.errorString());
         return;
     }
     QNetworkRequest req(url);
@@ -106,19 +107,19 @@ void AiModels::startNext() {
         const QString errText = reply->errorString();
         reply->deleteLater();
         if (m_cancelled) {
-            fail("Download cancelled.");
+            fail(TR("Download cancelled."));
             return;
         }
         const qint64 size = QFileInfo(m_file.fileName()).size();
         if (err != QNetworkReply::NoError || size < m_model.minBytes) {
-            m_lastError = err != QNetworkReply::NoError ? errText : QString("The file was incomplete (%1 bytes).").arg(size);
+            m_lastError = err != QNetworkReply::NoError ? errText : QString(TR("The file was incomplete (%1 bytes).")).arg(size);
             ++m_urlIndex;
             startNext();
             return;
         }
         QFile::remove(pathOf(m_model));
         if (!QFile::rename(m_file.fileName(), pathOf(m_model))) {
-            fail("Could not save the model file.");
+            fail(TR("Could not save the model file."));
             return;
         }
         emit finished(true, QString());
@@ -145,8 +146,8 @@ bool Transcriber::supportsWhisper(const QString& ffmpeg, QString* detail) {
     const QString out = QString::fromUtf8(p.readAllStandardOutput());
     const bool ok = ran && out.contains(QRegularExpression(R"(\swhisper\s)"));
     if (!ok && detail)
-        *detail = "The ffmpeg that is installed does not include the Whisper speech filter (FFmpeg 8 or newer is needed). "
-                  "The Windows version of HR Premiere includes it.";
+        *detail = TR("The ffmpeg that is installed does not include the Whisper speech filter (FFmpeg 8 or newer is needed). "
+                  "The Windows version of HR Premiere includes it.");
     cache.insert(ffmpeg, ok);
     return ok;
 }
@@ -158,7 +159,7 @@ void Transcriber::start(const Request& r) {
     m_log.clear();
     const QString ffmpeg = Exporter::findFfmpeg();
     if (ffmpeg.isEmpty()) {
-        finish(false, {}, "ffmpeg was not found. Put ffmpeg next to HRPremiere or add it to your PATH.");
+        finish(false, {}, TR("ffmpeg was not found. Put ffmpeg next to HRPremiere or add it to your PATH."));
         return;
     }
     QString why;
@@ -167,7 +168,7 @@ void Transcriber::start(const Request& r) {
         return;
     }
     if (!AiModels::isInstalled(r.model)) {
-        finish(false, {}, "The speech model is not installed yet.");
+        finish(false, {}, TR("The speech model is not installed yet."));
         return;
     }
     m_outName = QString("transcript_%1.srt").arg(QString(r.mediaId).remove(QRegularExpression("[^A-Za-z0-9_-]")));
@@ -192,7 +193,7 @@ void Transcriber::launch(bool withVad) {
     connect(m_proc, &QProcess::readyReadStandardError, this, &Transcriber::onStderr);
     connect(m_proc, &QProcess::finished, this, &Transcriber::onFinished);
     m_proc->start(Exporter::findFfmpeg(), args);
-    if (!m_proc->waitForStarted(10000)) finish(false, {}, "Could not start ffmpeg: " + m_proc->errorString());
+    if (!m_proc->waitForStarted(10000)) finish(false, {}, TR("Could not start ffmpeg: ") + m_proc->errorString());
 }
 
 void Transcriber::onStdout() {
@@ -221,7 +222,7 @@ void Transcriber::cancel() {
 void Transcriber::onFinished(int code, QProcess::ExitStatus status) {
     onStderr();
     if (m_cancelled) {
-        finish(false, {}, "Cancelled.");
+        finish(false, {}, TR("Cancelled."));
         return;
     }
     if (status != QProcess::NormalExit || code != 0) {
@@ -231,7 +232,11 @@ void Transcriber::onFinished(int code, QProcess::ExitStatus status) {
         }
         QString tail = m_log.trimmed();
         if (tail.size() > 600) tail = "…" + tail.right(600);
-        finish(false, {}, "Speech recognition failed.\n" + tail);
+        // Windows reports a crash as a status code 0xC...  (illegal instruction, access violation ...)
+        const bool crashed = status != QProcess::NormalExit || code < 0 || quint32(code) >= 0xC0000000u;
+        QString msg = TR("Speech recognition failed.") + "\n" + tail;
+        if (crashed) msg = TR("The speech engine stopped unexpectedly. This can happen when the processor does not support a feature the speech model uses.") + "\n" + msg;
+        finish(false, {}, msg);
         return;
     }
     QFile f(QDir(AiModels::dir()).filePath(m_outName));
@@ -242,7 +247,7 @@ void Transcriber::onFinished(int code, QProcess::ExitStatus status) {
         f.remove();
     }
     emit progress(1.0);
-    finish(true, segs, segs.isEmpty() ? "No speech was found." : QString("%1 sentences").arg(segs.size()));
+    finish(true, segs, segs.isEmpty() ? TR("No speech was found.") : QString(TR("%1 sentences")).arg(segs.size()));
 }
 
 void Transcriber::finish(bool ok, const QVector<TranscriptSegment>& segs, const QString& msg) {

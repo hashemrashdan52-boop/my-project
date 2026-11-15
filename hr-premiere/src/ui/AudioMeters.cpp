@@ -25,6 +25,7 @@ static double dbPos(float amp) {  // 0..1 along the meter, -60 dB .. 0 dB
 
 void AudioMeters::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    p.setLayoutDirection(Qt::LeftToRight);   // painted LTR also in the Arabic version
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), theme::bg1);
     const int top = 36, bottom = height() - 10;

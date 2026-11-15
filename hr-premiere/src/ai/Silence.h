@@ -32,7 +32,7 @@ double levelPercentileDb(const LevelMap& map, double a, double b, double percent
 // What the sound of the whole sequence is like.
 struct AudioStats {
     bool valid = false;
-    double noiseFloorDb = -60;   // the quiet 15 % of the time
+    double noiseFloorDb = -60;   // the quietest 5 % of the time
     double speechDb = -20;       // the loud 10 % of the time
     double dynamicDb() const { return speechDb - noiseFloorDb; }
     double seconds = 0;          // how much sound was measured

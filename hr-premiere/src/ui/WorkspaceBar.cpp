@@ -37,6 +37,7 @@ QRectF WorkspaceBar::tabRect(int i) const {
 
 void WorkspaceBar::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    p.setLayoutDirection(Qt::LeftToRight);   // painted LTR also in the Arabic version
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), theme::bg2);
     p.setPen(theme::border);
@@ -57,7 +58,7 @@ void WorkspaceBar::paintEvent(QPaintEvent*) {
         const bool cur = i == m_current;
         if (i == m_hover && !cur) p.fillRect(r.adjusted(2, 4, -2, -4), theme::bg4);
         p.setFont(f);
-        p.setPen(cur ? Qt::white : theme::textDim);
+        p.setPen(cur ? (theme::dark ? QColor(Qt::white) : theme::text) : theme::textDim);     // readable on the light theme too
         p.drawText(r, Qt::AlignCenter, TR(m_names[i]));
         if (cur) {
             p.setPen(Qt::NoPen);
@@ -92,7 +93,7 @@ void WorkspaceBar::mouseMoveEvent(QMouseEvent* e) {
     if (h != m_hover) { m_hover = h; update(); }
     const bool onLogo = QRectF(8, 0, 170, height()).contains(e->position());
     setCursor(h >= 0 || onLogo ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    if (onLogo) setToolTip(TR("الملكية · Ownership")); else setToolTip(QString());
+    if (onLogo) setToolTip("الملكية · Ownership"); else setToolTip(QString());
 }
 
 void WorkspaceBar::leaveEvent(QEvent*) {
