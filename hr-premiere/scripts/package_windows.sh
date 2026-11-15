@@ -31,6 +31,20 @@ for d in platforms styles imageformats iconengines multimedia tls generic; do
   if [ -d "$PLUGINS/$d" ] && [ ! -d "$OUT/$d" ]; then cp -r "$PLUGINS/$d" "$OUT/$d"; fi
 done
 
+# 1b) whisper.cpp's ggml loads its CPU back-end as a plug-in DLL at run time (ggml-cpu-*.dll, searched next to the
+#     program that uses it, here ffmpeg.exe). `ldd` cannot see run-time plug-ins, so they are copied explicitly:
+#     without them the Whisper filter aborts with "GGML_ASSERT(device) failed". Only the CPU ones are taken (the GPU
+#     back-ends pull in Vulkan / BLAS and the speech filter is run with use_gpu=false anyway).
+PREFIX="${MSYSTEM_PREFIX:-$(dirname "$(dirname "$FFMPEG")")}"
+echo "---- ggml / whisper in $PREFIX ----"
+(pacman -Q 2>/dev/null | grep -i -E 'ggml|whisper|ffmpeg' || true)
+find "$PREFIX" \( -iname '*ggml*.dll' -o -iname '*whisper*.dll' \) 2>/dev/null | sort || true
+while IFS= read -r plugin; do
+  [ -n "$plugin" ] || continue
+  base="$(basename "$plugin")"
+  if [ ! -f "$OUT/$base" ]; then cp "$plugin" "$OUT/$base"; echo "bundled ggml CPU plug-in: $base"; fi
+done < <(find "$PREFIX" \( -iname 'ggml-cpu*.dll' -o -iname 'libggml-cpu*.dll' \) 2>/dev/null)
+
 # 2) every DLL that the exe / ffmpeg / plugins depend on (transitively) ----------------
 changed=1
 while [ "$changed" -eq 1 ]; do

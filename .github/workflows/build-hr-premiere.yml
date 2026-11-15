@@ -139,6 +139,8 @@ jobs:
           $ErrorActionPreference = $savedPreference
           $global:LASTEXITCODE = 0     # this call is only informational; the step must not end with its exit code
           Write-Host "----------------------------------"
+          Write-Host "---- ggml / whisper files in the package ----"
+          Get-ChildItem $dir -Filter "*.dll" | Where-Object { $_.Name -match 'ggml|whisper' } | ForEach-Object { Write-Host ("{0}  {1:N0} bytes" -f $_.Name, $_.Length) }
 
           $env:HR_AI_DIR = Join-Path $env:RUNNER_TEMP "hr-ai"
           $srt = Join-Path (Get-Location) "dist\speech_test.srt"
@@ -149,7 +151,16 @@ jobs:
           if (-not $p.WaitForExit(900000)) { $p.Kill(); throw "speech recognition took longer than 15 minutes" }
           Write-Host "exit code: $($p.ExitCode)"
           if (Test-Path "$srt.log") { Write-Host "---- log ----"; Get-Content "$srt.log" }
-          if ($p.ExitCode -ne 0) { throw "speech recognition failed (exit code $($p.ExitCode))" }
+          if ($p.ExitCode -ne 0) {
+            # show what ggml / whisper really did (which back-ends were loaded, where it stopped)
+            Write-Host "---- ffmpeg debug run (last 80 lines) ----"
+            $savedPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            Push-Location $env:HR_AI_DIR
+            & "$dir\ffmpeg.exe" -hide_banner -loglevel debug -nostdin -y -i $wav -vn -af "whisper=model=ggml-tiny.bin:language=en:queue=20:use_gpu=false:destination=diag.srt:format=srt" -f null - 2>&1 | Select-Object -Last 80 | ForEach-Object { Write-Host "$_" }
+            Pop-Location
+            $ErrorActionPreference = $savedPreference
+            throw "speech recognition failed (exit code $($p.ExitCode))"
+          }
           $text = Get-Content $srt -Raw
           Write-Host "---- subtitles ----"; Write-Host $text
           if ($text -notmatch "(?i)test|fox|hello|speech") { throw "the recognised text does not look like the speech that was spoken" }
