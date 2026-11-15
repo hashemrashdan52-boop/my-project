@@ -655,7 +655,8 @@ void AiPanel::onPosition(double t) {
 }
 
 // The new words of one sentence: the transcript and the captions on the picture change together (one undo step).
-static void changeSentence(Project* project, const ai::TimelineSegment& row, const QString& text, int captionChars, const QString& undoText) {
+// `row` is a copy on purpose: editing the transcript rebuilds the list of sentences, so a reference into it would dangle.
+static void changeSentence(Project* project, const ai::TimelineSegment row, const QString& text, int captionChars, const QString& undoText) {
     project->undoStack()->beginMacro(undoText);
     project->editSentence(row.mediaId, row.index, text);
     Timeline probe = project->timeline();
