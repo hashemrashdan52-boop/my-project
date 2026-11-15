@@ -367,6 +367,40 @@ private slots:
         QVERIFY(!proj()->timeline().video[0].locked);
     }
 
+
+    void altClickDeletesOnlyTheSound() {
+        load();   // red.mp4 = picture on V1 + sound on A1 (linked), blue.mp4 = picture only
+        const Clip audio = proj()->timeline().audio[0].clips[0];
+        const QRectF r = tl()->clipRectForId(audio.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, Qt::AltModifier, at(r, 0.5, 0.6));   // Alt = ignore the link
+        QCOMPARE(proj()->selection().size(), 1);
+        QTest::keyClick(w, Qt::Key_Delete);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 0);   // the sound is gone ...
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 2);   // ... the pictures stay
+        // a plain click still selects (and therefore deletes) the linked pair
+        QTest::keyClick(w, Qt::Key_Z, Qt::ControlModifier);
+        const Clip video = proj()->timeline().video[0].clips[0];
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, at(tl()->clipRectForId(video.id), 0.5, 0.6));
+        QCOMPARE(proj()->selection().size(), 2);
+        QTest::keyClick(w, Qt::Key_Delete);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 0);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+    }
+
+    void muteButtonSilencesTheTrack() {
+        load();
+        const Clip audio = proj()->timeline().audio[0].clips[0];
+        const int y = int(tl()->clipRectForId(audio.id).center().y());
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 80, y));   // the "M" button in the A1 header
+        QVERIFY(!proj()->timeline().audio[0].enabled);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 80, y));
+        QVERIFY(proj()->timeline().audio[0].enabled);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 56, y));   // "S" = solo
+        QVERIFY(proj()->timeline().audio[0].solo);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(150 - 56, y));
+        QVERIFY(!proj()->timeline().audio[0].solo);
+    }
+
     void rendersSensibleScreenshot() {
         load();
         w->program()->seek(1.0);

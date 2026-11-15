@@ -692,9 +692,10 @@ void MainWindow::addMediaToTimeline(const QStringList& ids, double time, int v, 
 }
 
 void MainWindow::deleteSelection(bool ripple) {
-    QSet<QString> ids = m_project.selection();
+    // The selection already contains the linked partners when "linked selection" is on; Alt+click selects a
+    // single clip on purpose (e.g. only the sound of a video), so delete exactly what is selected.
+    const QSet<QString> ids = m_project.selection();
     if (ids.isEmpty()) return;
-    if (m_timeline->linkedSelection()) ids = ops::expandLinked(m_project.timeline(), ids);
     m_project.edit(ripple ? "Ripple delete" : "Delete", [&](Timeline& tl) { ops::remove(tl, ids, ripple); });
 }
 
