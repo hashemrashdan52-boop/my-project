@@ -42,3 +42,10 @@
   حزم Ubuntu (`aapt apksigner zipalign dalvik-exchange android-sdk-platform-23`).
 
 الكود بلغة Java بدون مكتبات خارجية: `app/src/main/java/com/hashem/wifiscanner/`.
+
+
+---
+
+## مشاريع أخرى في هذا المستودع
+
+- **[HR Premiere](hr-premiere/)** – محرر فيديو لسطح المكتب (C++ / Qt 6 / FFmpeg) بنفس فكرة Adobe Premiere Pro.

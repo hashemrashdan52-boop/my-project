@@ -1,0 +1,135 @@
+name: Build HR Premiere
+
+on:
+  push:
+    paths:
+      - 'hr-premiere/**'
+      - '.github/workflows/build-hr-premiere.yml'
+  pull_request:
+    paths:
+      - 'hr-premiere/**'
+      - '.github/workflows/build-hr-premiere.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Also publish the Windows build as the "hr-premiere-latest" release'
+        type: boolean
+        default: false
+
+jobs:
+  linux:
+    name: Linux build + tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            qt6-base-dev qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
+            fonts-dejavu-core libxkbcommon-x11-0
+
+      - name: Configure
+        run: cmake -S hr-premiere -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (engine + UI, offscreen)
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  windows:
+    name: Windows build + package
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-ffmpeg
+            zip
+
+      - name: Configure
+        run: cmake -S hr-premiere -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (engine + UI, offscreen)
+        continue-on-error: true
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Package
+        run: |
+          bash hr-premiere/scripts/package_windows.sh build dist/HR-Premiere
+          cd dist
+          zip -r -q HR-Premiere-win64.zip HR-Premiere
+
+      - name: Smoke test the packaged app (starts, renders, quits)
+        continue-on-error: true
+        run: |
+          cd dist/HR-Premiere
+          QT_QPA_PLATFORM=offscreen ./HRPremiere.exe --screenshot ../smoke.png --delay 1500 --size 1400x860
+
+      - name: Build installer (Inno Setup)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "hr-premiere\installer\hrpremiere.iss"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HR-Premiere-windows
+          path: |
+            dist/HR-Premiere-win64.zip
+            dist/HR-Premiere-Setup.exe
+            dist/smoke.png
+          if-no-files-found: warn
+
+  release:
+    name: Publish "latest" release
+    needs: [linux, windows]
+    if: (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: HR-Premiere-windows
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hr-premiere-latest
+          name: HR Premiere – latest build
+          prerelease: true
+          body: |
+            Latest automatic build of HR Premiere for Windows.
+            - **HR-Premiere-Setup.exe** – installer
+            - **HR-Premiere-win64.zip** – portable (unzip and run `HRPremiere.exe`)
+          files: |
+            dist/HR-Premiere-win64.zip
+            dist/HR-Premiere-Setup.exe

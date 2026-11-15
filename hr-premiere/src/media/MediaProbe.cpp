@@ -2,10 +2,12 @@
 
 #include <QFileInfo>
 #include <QImageReader>
+#include <cmath>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/display.h>
 }
 
 namespace hr {
@@ -69,6 +71,15 @@ bool probeMedia(const QString& path, MediaItem& item, QString* error) {
         AVStream* st = fmt->streams[vIdx];
         item.width = st->codecpar->width;
         item.height = st->codecpar->height;
+        // phone videos store their orientation as metadata: report the size as it is displayed
+        if (const AVPacketSideData* sd = av_packet_side_data_get(st->codecpar->coded_side_data, st->codecpar->nb_coded_side_data,
+                                                                 AV_PKT_DATA_DISPLAYMATRIX)) {
+            if (sd->size >= 9 * int(sizeof(int32_t))) {
+                const double theta = av_display_rotation_get(reinterpret_cast<const int32_t*>(sd->data));
+                const int rot = ((int(std::lround(-theta)) % 360) + 360) % 360;
+                if (rot == 90 || rot == 270) std::swap(item.width, item.height);
+            }
+        }
         const AVRational fr = av_guess_frame_rate(fmt, st, nullptr);
         item.fps = (fr.num > 0 && fr.den > 0) ? av_q2d(fr) : 25.0;
         if (item.duration <= 0 && st->duration > 0) item.duration = st->duration * av_q2d(st->time_base);

@@ -9,3 +9,7 @@ captures/
 /build-nosdk/
 /.signing/
 /.cache/
+
+# HR Premiere
+/hr-premiere/build/
+/hr-premiere/dist/

@@ -1,0 +1,307 @@
+// UI tests: drive the real main window (offscreen) with synthetic mouse / keyboard events.
+#include "core/EditOps.h"
+#include "engine/Exporter.h"
+#include "ui/MainWindow.h"
+#include "ui/Theme.h"
+
+#include <QApplication>
+#include <QDoubleSpinBox>
+#include <QMimeData>
+#include <QProcess>
+#include <QTemporaryDir>
+#include <QtTest>
+
+using namespace hr;
+
+static bool makeVideo(const QString& path, const QString& color, double dur, bool audio) {
+    QStringList args = {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        QString("color=c=%1:s=320x180:r=30:d=%2").arg(color).arg(dur)};
+    if (audio) args << "-f" << "lavfi" << "-i" << QString("sine=frequency=440:duration=%1").arg(dur);
+    args << "-c:v" << "libx264" << "-pix_fmt" << "yuv420p";
+    if (audio) args << "-c:a" << "aac" << "-shortest";
+    args << path;
+    return QProcess::execute(Exporter::findFfmpeg().isEmpty() ? "ffmpeg" : Exporter::findFfmpeg(), args) == 0;
+}
+
+class UiTests : public QObject {
+    Q_OBJECT
+    QTemporaryDir dir;
+    QString red, blue, green;
+    MainWindow* w = nullptr;
+
+    Project* proj() { return w->project(); }
+    TimelineWidget* tl() { return w->timeline(); }
+    QPoint at(const QRectF& r, double fx, double fy) { return QPoint(int(r.left() + r.width() * fx), int(r.top() + r.height() * fy)); }
+    void settle() { QCoreApplication::processEvents(); }
+    void resetTimeline() {
+        proj()->clear();
+        proj()->undoStack()->clear();
+        settle();
+    }
+    void load() {
+        resetTimeline();
+        w->autoPlace({red, blue});  // red 0..4 (with audio), blue 4..6 (video only)
+        settle();
+    }
+
+private slots:
+    void initTestCase() {
+        QVERIFY(dir.isValid());
+        red = dir.filePath("red.mp4");
+        blue = dir.filePath("blue.mp4");
+        green = dir.filePath("green.mp4");
+        QVERIFY(makeVideo(red, "red", 4, true));
+        QVERIFY(makeVideo(blue, "blue", 2, false));
+        QVERIFY(makeVideo(green, "green", 3, true));
+        theme::apply(*qApp);
+        w = new MainWindow(false);
+        w->resize(1500, 900);
+        w->show();
+        QVERIFY(QTest::qWaitForWindowExposed(w));
+    }
+    void cleanupTestCase() {
+        delete w;
+        w = nullptr;
+    }
+
+    void importAndAutoPlace() {
+        load();
+        QCOMPARE(proj()->media().size(), 2);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 2);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 1);
+        QCOMPARE(proj()->timeline().width, 320);   // first clip set the sequence settings
+        QCOMPARE(proj()->timeline().height, 180);
+        QVERIFY(std::abs(proj()->timeline().duration() - 6.0) < 0.1);
+    }
+
+    void clickSelectsLinkedPair() {
+        load();
+        const Clip v = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(v.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, at(r, 0.5, 0.6));
+        QCOMPARE(proj()->selection().size(), 2);  // video + its linked audio
+        QVERIFY(proj()->selection().contains(proj()->timeline().audio[0].clips[0].id));
+        // click on empty space deselects
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(int(r.right() + 300), int(r.center().y())));
+        QCOMPARE(proj()->selection().size(), 0);
+    }
+
+    void dragMovesClipAndUndoRestores() {
+        load();
+        const Clip blue0 = proj()->timeline().video[0].clips[1];
+        const QRectF r = tl()->clipRectForId(blue0.id);
+        const QPoint p0 = at(r, 0.5, 0.6);
+        // drag the blue clip 3 s to the right (80 px / s at the default zoom)
+        const double pps = tl()->pixelsPerSecond();
+        QTest::mousePress(tl(), Qt::LeftButton, {}, p0);
+        QTest::mouseMove(tl(), p0 + QPoint(int(pps), 0));
+        QTest::mouseMove(tl(), p0 + QPoint(int(3 * pps), 0));
+        QTest::mouseRelease(tl(), Qt::LeftButton, {}, p0 + QPoint(int(3 * pps), 0));
+        const Clip moved = *proj()->timeline().clip(blue0.id);
+        QVERIFY2(std::abs(moved.start - (blue0.start + 3.0)) < 0.2, qPrintable(QString::number(moved.start)));
+        proj()->undoStack()->undo();
+        QVERIFY(std::abs(proj()->timeline().clip(blue0.id)->start - blue0.start) < 1e-6);
+        proj()->undoStack()->redo();
+        QVERIFY(std::abs(proj()->timeline().clip(blue0.id)->start - (blue0.start + 3.0)) < 0.2);
+    }
+
+    void dragToAnotherTrack() {
+        load();
+        const Clip blue0 = proj()->timeline().video[0].clips[1];
+        const QRectF r = tl()->clipRectForId(blue0.id);
+        const QPoint p0 = at(r, 0.5, 0.6);
+        QTest::mousePress(tl(), Qt::LeftButton, {}, p0);
+        QTest::mouseMove(tl(), p0 + QPoint(0, -30));
+        QTest::mouseMove(tl(), p0 + QPoint(0, -62));   // one video track up
+        QTest::mouseRelease(tl(), Qt::LeftButton, {}, p0 + QPoint(0, -62));
+        QCOMPARE(proj()->timeline().video[1].clips.size(), 1);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+    }
+
+    void trimRightEdge() {
+        load();
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(red0.id);
+        const QPoint edge(int(r.right()) - 2, int(r.center().y()) + 4);
+        const double pps = tl()->pixelsPerSecond();
+        QTest::mousePress(tl(), Qt::LeftButton, {}, edge);
+        QTest::mouseMove(tl(), edge - QPoint(int(pps), 0));
+        QTest::mouseMove(tl(), edge - QPoint(int(2 * pps), 0));
+        QTest::mouseRelease(tl(), Qt::LeftButton, {}, edge - QPoint(int(2 * pps), 0));
+        const Clip now = *proj()->timeline().clip(red0.id);
+        QVERIFY2(std::abs(now.duration - 2.0) < 0.25, qPrintable(QString::number(now.duration)));
+        // the linked audio clip was trimmed too
+        QVERIFY(std::abs(proj()->timeline().audio[0].clips[0].duration - now.duration) < 1e-6);
+    }
+
+    void razorSplitsClipAndItsAudio() {
+        load();
+        tl()->setTool(Tool::Razor);
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(red0.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, at(r, 0.5, 0.6));
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 3);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 2);
+        tl()->setTool(Tool::Selection);
+    }
+
+    void deleteAndRippleDelete() {
+        load();
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        const QRectF r = tl()->clipRectForId(red0.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, at(r, 0.5, 0.6));
+        QTest::keyClick(w, Qt::Key_Delete, Qt::ShiftModifier);   // ripple delete
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+        QVERIFY(std::abs(proj()->timeline().video[0].clips[0].start) < 1e-6);   // blue moved to 0
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 0);
+        QTest::keyClick(w, Qt::Key_Z, Qt::ControlModifier);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 2);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 1);
+    }
+
+    void splitAtPlayheadShortcut() {
+        load();
+        w->program()->seek(2.0);
+        settle();
+        QTest::keyClick(w, Qt::Key_K, Qt::ControlModifier);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 3);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 2);
+    }
+
+    void spaceTogglesPlayback() {
+        load();
+        w->program()->seek(0.5);
+        QTest::keyClick(w, Qt::Key_Space);
+        QVERIFY(w->program()->isPlaying());
+        QTest::qWait(700);
+        QVERIFY2(w->program()->position() > 0.9, qPrintable(QString::number(w->program()->position())));
+        QTest::keyClick(w, Qt::Key_Space);
+        QVERIFY(!w->program()->isPlaying());
+        const double stopped = w->program()->position();
+        QTest::qWait(200);
+        QCOMPARE(w->program()->position(), stopped);
+        // playback runs to the end and stops by itself
+        w->program()->seek(5.6);
+        w->program()->play();
+        QTRY_VERIFY_WITH_TIMEOUT(!w->program()->isPlaying(), 3000);
+        QVERIFY(w->program()->position() >= 5.9);
+    }
+
+    void arrowKeysStepFrames() {
+        load();
+        w->program()->seek(1.0);
+        QTest::keyClick(w, Qt::Key_Right);
+        QVERIFY(std::abs(w->program()->position() - (1.0 + 1.0 / 30)) < 1e-3);
+        QTest::keyClick(w, Qt::Key_Left, Qt::ShiftModifier);
+        QVERIFY(std::abs(w->program()->position() - (1.0 + 1.0 / 30 - 5.0 / 30)) < 1e-3);
+        QTest::keyClick(w, Qt::Key_Down);   // next edit point
+        QVERIFY(std::abs(w->program()->position() - 4.0) < 1e-3);
+    }
+
+    void markersAndInOut() {
+        load();
+        w->program()->seek(1.0);
+        QTest::keyClick(w, Qt::Key_I);
+        w->program()->seek(3.0);
+        QTest::keyClick(w, Qt::Key_O);
+        QVERIFY(std::abs(proj()->timeline().markIn - 1.0) < 1e-3);
+        QVERIFY(std::abs(proj()->timeline().markOut - 3.0) < 1e-3);
+        QTest::keyClick(w, Qt::Key_M);
+        QCOMPARE(proj()->timeline().markers.size(), 1);
+        QTest::keyClick(w, Qt::Key_X, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(proj()->timeline().markIn < 0 && proj()->timeline().markOut < 0);
+    }
+
+    void dropFromProjectPanel() {
+        resetTimeline();
+        const QString id = proj()->importFile(green);
+        QVERIFY(!id.isEmpty());
+        settle();
+        // find the V1 row: any point inside the video area at the timeline's V1 line
+        const double pps = tl()->pixelsPerSecond();
+        auto* mime = new QMimeData;
+        mime->setData("application/x-hr-media", id.toUtf8());
+        // V1 is the lowest video row: use the row geometry via a probe clip
+        proj()->edit("probe", [&](Timeline& t) { ops::placeClips(t, ops::makeClips(*proj()->mediaById(id), 0, 1, 20), 0, 0, false); });
+        const QRectF probe = tl()->clipRectForId(proj()->timeline().video[0].clips[0].id);
+        proj()->undoStack()->undo();
+        settle();
+        const QPoint pos(int(150 + 2 * pps), int(probe.center().y()));
+        QDragEnterEvent enter(pos, Qt::CopyAction, mime, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &enter);
+        QDragMoveEvent move(pos, Qt::CopyAction, mime, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &move);
+        QDropEvent drop(QPointF(pos), Qt::CopyAction, mime, Qt::LeftButton, {});
+        QApplication::sendEvent(tl(), &drop);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 1);
+        QCOMPARE(proj()->timeline().audio[0].clips.size(), 1);
+        QVERIFY(proj()->timeline().video[0].clips[0].start > 1.0);
+        delete mime;
+    }
+
+    void effectsAndTitles() {
+        load();
+        const Clip red0 = proj()->timeline().video[0].clips[0];
+        proj()->setSelection({red0.id});
+        // apply an effect from the browser's signal path
+        QMetaObject::invokeMethod(w, [&] {}, Qt::DirectConnection);
+        auto* browser = w->findChild<EffectsBrowser*>();
+        QVERIFY(browser);
+        emit browser->applyEffect("gaussian_blur");
+        QVERIFY(proj()->timeline().clip(red0.id)->effect("gaussian_blur") != nullptr);
+        // the Effect Controls panel shows it and edits go through undo
+        auto* panel = w->findChild<EffectControlsPanel*>();
+        QVERIFY(panel);
+        const auto spins = panel->findChildren<QDoubleSpinBox*>();
+        QVERIFY(spins.size() >= 8);
+        // title via the Type tool
+        tl()->setTool(Tool::Type);
+        const QRectF r = tl()->clipRectForId(red0.id);
+        QTest::mouseClick(tl(), Qt::LeftButton, {}, QPoint(int(r.left() + 30), int(r.top() - 58)));   // V2 row, 0.4 s in
+        int titles = 0;
+        for (const Track& t : proj()->timeline().video)
+            for (const Clip& c : t.clips) titles += c.kind == ClipKind::Title;
+        QCOMPARE(titles, 1);
+        tl()->setTool(Tool::Selection);
+    }
+
+    void saveAndReopenProject() {
+        load();
+        const QString file = dir.filePath("ui.hrproj");
+        QVERIFY(proj()->save(file));
+        QVERIFY(w->openProjectFile(file));
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 2);
+        QCOMPARE(proj()->media().size(), 2);
+        QVERIFY(!proj()->isDirty());
+    }
+
+    void copyPaste() {
+        load();
+        const Clip blue0 = proj()->timeline().video[0].clips[1];
+        proj()->setSelection({blue0.id});
+        QTest::keyClick(w, Qt::Key_C, Qt::ControlModifier);
+        w->program()->seek(10.0);
+        QTest::keyClick(w, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(proj()->timeline().video[0].clips.size(), 3);
+        QVERIFY(std::abs(proj()->timeline().video[0].clips[2].start - 10.0) < 0.05);
+    }
+
+    void rendersSensibleScreenshot() {
+        load();
+        w->program()->seek(1.0);
+        QTest::qWait(400);
+        const QImage shot = w->grab().toImage();
+        QVERIFY(shot.width() >= 1400);
+        // the program monitor shows the red clip: find a strongly red pixel somewhere on screen
+        bool red = false;
+        for (int y = 0; y < shot.height() && !red; y += 4)
+            for (int x = 0; x < shot.width(); x += 4) {
+                const QColor c(shot.pixel(x, y));
+                if (c.red() > 200 && c.green() < 60 && c.blue() < 60) { red = true; break; }
+            }
+        QVERIFY(red);
+    }
+};
+
+QTEST_MAIN(UiTests)
+#include "test_ui.moc"

@@ -51,31 +51,31 @@ target_link_libraries(hrcore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg PkgCon
 
 # ---------------------------------------------------------------- application
 option(HR_BUILD_APP "Build the HRPremiere application (needs the UI sources)" ON)
-set(HR_UI_SOURCES
-    src/main.cpp
-    src/ui/Theme.cpp
-    src/ui/Icons.cpp
-    src/ui/ScrubLabel.cpp
-    src/ui/MonitorPanel.cpp
-    src/ui/ProjectPanel.cpp
-    src/ui/EffectControlsPanel.cpp
-    src/ui/EffectsBrowser.cpp
-    src/ui/TimelineWidget.cpp
-    src/ui/ToolsBar.cpp
-    src/ui/AudioMeters.cpp
-    src/ui/WorkspaceBar.cpp
-    src/ui/Dialogs.cpp
-    src/ui/MainWindow.cpp
-    resources/resources.qrc
-)
-
 if(HR_BUILD_APP)
-    if(WIN32)
-        list(APPEND HR_UI_SOURCES resources/hrpremiere.rc)
-    endif()
+    add_library(hrui OBJECT
+        src/ui/Theme.cpp
+        src/ui/Icons.cpp
+        src/ui/ScrubLabel.cpp
+        src/ui/MonitorPanel.cpp
+        src/ui/ProjectPanel.cpp
+        src/ui/EffectControlsPanel.cpp
+        src/ui/EffectsBrowser.cpp
+        src/ui/TimelineWidget.cpp
+        src/ui/ToolsBar.cpp
+        src/ui/AudioMeters.cpp
+        src/ui/WorkspaceBar.cpp
+        src/ui/Dialogs.cpp
+        src/ui/MainWindow.cpp
+        resources/resources.qrc
+    )
+    target_link_libraries(hrui PUBLIC hrcore)
 
-    add_executable(HRPremiere WIN32 ${HR_UI_SOURCES})
-    target_link_libraries(HRPremiere PRIVATE hrcore)
+    set(HR_APP_SOURCES src/main.cpp)
+    if(WIN32)
+        list(APPEND HR_APP_SOURCES resources/hrpremiere.rc)
+    endif()
+    add_executable(HRPremiere WIN32 ${HR_APP_SOURCES})
+    target_link_libraries(HRPremiere PRIVATE hrui)
     set_target_properties(HRPremiere PROPERTIES OUTPUT_NAME "HRPremiere")
 endif()
 
@@ -85,6 +85,13 @@ add_executable(hr_tests tests/test_main.cpp)
 target_link_libraries(hr_tests PRIVATE hrcore Qt6::Test)
 add_test(NAME hr_tests COMMAND hr_tests)
 set_tests_properties(hr_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+if(HR_BUILD_APP)
+    add_executable(hr_ui_tests tests/test_ui.cpp)
+    target_link_libraries(hr_ui_tests PRIVATE hrui Qt6::Test)
+    add_test(NAME hr_ui_tests COMMAND hr_ui_tests)
+    set_tests_properties(hr_ui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
 
 if(HR_BUILD_APP)
     install(TARGETS HRPremiere RUNTIME DESTINATION bin)
