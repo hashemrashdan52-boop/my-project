@@ -73,7 +73,6 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-svg
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-ffmpeg
-            zip
 
       - name: Configure
         run: cmake -S hr-premiere -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -82,47 +81,67 @@ jobs:
         run: cmake --build build
 
       - name: Test (engine + UI, offscreen)
-        continue-on-error: true
         run: ctest --test-dir build --output-on-failure
         env:
           QT_QPA_PLATFORM: offscreen
 
       - name: Package
-        run: |
-          bash hr-premiere/scripts/package_windows.sh build dist/HR-Premiere
-          cd dist
-          zip -r -q HR-Premiere-win64.zip HR-Premiere
+        run: bash hr-premiere/scripts/package_windows.sh build dist/HR-Premiere
 
       - name: Smoke test the package on a clean PATH
-        continue-on-error: true
         timeout-minutes: 5
         shell: pwsh
         run: |
-          # Start the packaged app the way a user would: no MSYS2 on PATH, so a missing DLL or plugin shows up here.
+          # Run the package the way a user would: no MSYS2 on PATH, so a missing DLL or plugin shows up here.
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           $dir = (Resolve-Path "dist\HR-Premiere").Path
+
+          # 1) the bundled ffmpeg must start and be able to encode H.264 + AAC (this is what Export uses)
+          $clip = Join-Path (Get-Location) "dist\ffmpeg_smoke.mp4"
+          & "$dir\ffmpeg.exe" -hide_banner -loglevel error -y -f lavfi -i "testsrc=size=320x240:rate=30:duration=1" -f lavfi -i "sine=duration=1" -c:v libx264 -pix_fmt yuv420p -c:a aac $clip
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $clip)) { throw "the bundled ffmpeg.exe could not encode a test clip (exit code $LASTEXITCODE)" }
+          Write-Host "ffmpeg.exe encoded a test clip: $((Get-Item $clip).Length) bytes"
+          Remove-Item $clip
+
+          # 2) the application must start, draw its window and write a screenshot
           $shot = Join-Path (Get-Location) "dist\smoke.png"
           $p = Start-Process -FilePath "$dir\HRPremiere.exe" -ArgumentList "--screenshot","`"$shot`"","--delay","2000","--size","1400x860" -WorkingDirectory $dir -PassThru
           if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "the packaged app did not finish within 90 s" }
           Write-Host "exit code: $($p.ExitCode)"
           if (-not (Test-Path $shot)) { throw "the packaged app did not produce a screenshot (exit code $($p.ExitCode))" }
-          Write-Host "screenshot written: $((Get-Item $shot).Length) bytes"
+          $size = (Get-Item $shot).Length
+          Write-Host "screenshot written: $size bytes"
+          if ($size -lt 20000) { throw "the screenshot looks empty" }
 
       - name: Build installer (Inno Setup)
-        continue-on-error: true
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "hr-premiere\installer\hrpremiere.iss"
+          & $iscc "/O$PWD\dist" "/DSourceDir=$PWD\dist\HR-Premiere" "/DAppVersion=0.1.0" "hr-premiere\installer\hrpremiere.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          if (-not (Test-Path "dist\HR-Premiere-Setup.exe")) { throw "the installer was not created in dist\" }
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
         with:
-          name: HR-Premiere-windows
-          path: |
-            dist/HR-Premiere-win64.zip
-            dist/HR-Premiere-Setup.exe
-            dist/smoke.png
+          name: HR-Premiere-Setup
+          path: dist/HR-Premiere-Setup.exe
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload portable version
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Premiere-portable
+          path: dist/HR-Premiere
+          if-no-files-found: error
+
+      - name: Upload smoke-test screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-screenshot
+          path: dist/smoke.png
           if-no-files-found: warn
 
   release:
@@ -135,8 +154,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: HR-Premiere-windows
+          name: HR-Premiere-Setup
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: HR-Premiere-portable
+          path: dist/HR-Premiere
+      - name: Zip the portable version
+        run: cd dist/HR-Premiere && zip -r -q ../HR-Premiere-win64.zip .
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: hr-premiere-latest

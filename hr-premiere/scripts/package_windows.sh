@@ -14,6 +14,7 @@ cp "$BUILD/HRPremiere.exe" "$OUT/"
 FFMPEG="$(command -v ffmpeg.exe || command -v ffmpeg)"
 echo "bundling ffmpeg from $FFMPEG"
 cp "$FFMPEG" "$OUT/ffmpeg.exe"
+cp "$(dirname "$0")/../installer/NOTICE.txt" "$OUT/NOTICE.txt"
 
 # 1) Qt plugins and Qt DLLs ---------------------------------------------------------
 DEPLOY=""
